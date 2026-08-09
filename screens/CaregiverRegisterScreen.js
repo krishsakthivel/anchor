@@ -1,0 +1,157 @@
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  useWindowDimensions,
+  TouchableOpacity,
+  ActivityIndicator,
+} from 'react-native';
+import styles from './CaregiverLoginScreen.styles';
+import { PLACEHOLDER, WHITE } from '../theme/colors';
+import { supabase } from '../lib/supabase';
+
+export default function CaregiverRegisterScreen({ navigation }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { width, height } = useWindowDimensions();
+
+  const scale = width / 375;
+  const s = (size) => Math.round(size * scale);
+
+  const handleRegister = async () => {
+    setError('');
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
+
+    setLoading(true);
+
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+    });
+
+    setLoading(false);
+
+    if (signUpError) {
+      setError(signUpError.message);
+      return;
+    }
+
+    if (!data.session) {
+      navigation.navigate('CaregiverLogin');
+      return;
+    }
+
+    navigation.navigate('CaregiverHome');
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <View style={styles.centerContent}>
+        <Image
+          source={require('../assets/logo.png')}
+          style={[styles.logo, { width: s(70), height: s(70), marginBottom: height * 0.02 }]}
+          resizeMode="contain"
+        />
+
+        <Text style={[styles.title, { fontSize: s(24), marginBottom: height * 0.01 }]}>
+          Create Caregiver Account
+        </Text>
+        <Text
+          style={[styles.subtitle, { fontSize: s(15), marginBottom: height * 0.04, paddingHorizontal: s(10) }]}
+        >
+          Set up your account to start caring.
+        </Text>
+
+        <Text style={[styles.label, { fontSize: s(15), marginBottom: height * 0.01 }]}>Email</Text>
+        <TextInput
+          style={[
+            styles.input,
+            { fontSize: s(16), paddingVertical: s(12), paddingHorizontal: s(14), marginBottom: height * 0.02 },
+          ]}
+          placeholder="you@example.com"
+          placeholderTextColor={PLACEHOLDER}
+          value={email}
+          onChangeText={setEmail}
+          autoCapitalize="none"
+          keyboardType="email-address"
+        />
+
+        <Text style={[styles.label, { fontSize: s(15), marginBottom: height * 0.01 }]}>Password</Text>
+        <TextInput
+          style={[
+            styles.input,
+            { fontSize: s(16), paddingVertical: s(12), paddingHorizontal: s(14), marginBottom: height * 0.02 },
+          ]}
+          placeholder="••••••••"
+          placeholderTextColor={PLACEHOLDER}
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+        />
+
+        <Text style={[styles.label, { fontSize: s(15), marginBottom: height * 0.01 }]}>Confirm Password</Text>
+        <TextInput
+          style={[
+            styles.input,
+            { fontSize: s(16), paddingVertical: s(12), paddingHorizontal: s(14), marginBottom: height * 0.02 },
+          ]}
+          placeholder="••••••••"
+          placeholderTextColor={PLACEHOLDER}
+          value={confirmPassword}
+          onChangeText={setConfirmPassword}
+          secureTextEntry
+        />
+
+        {error ? (
+          <Text style={[styles.errorText, { fontSize: s(13), marginBottom: height * 0.02 }]}>{error}</Text>
+        ) : null}
+
+        <TouchableOpacity
+          style={[
+            styles.loginButton,
+            (!email || !password || !confirmPassword || loading) && styles.loginButtonDisabled,
+            { paddingVertical: s(14), marginBottom: height * 0.02 },
+          ]}
+          onPress={handleRegister}
+          disabled={!email || !password || !confirmPassword || loading}
+        >
+          {loading ? (
+            <ActivityIndicator color={WHITE} />
+          ) : (
+            <Text style={[styles.loginButtonText, { fontSize: s(16) }]}>Create Account</Text>
+          )}
+        </TouchableOpacity>
+
+        <Text style={[styles.registerText, { fontSize: s(14), marginBottom: height * 0.02 }]}>
+          Already have an account?{' '}
+          <Text style={styles.registerLink} onPress={() => navigation.navigate('CaregiverLogin')}>
+            Log in
+          </Text>
+        </Text>
+
+        <Text style={[styles.backLink, { fontSize: s(14) }]} onPress={() => navigation.goBack()}>
+          ← Back
+        </Text>
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
