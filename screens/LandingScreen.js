@@ -10,25 +10,20 @@ import {
   Animated,
   TouchableOpacity,
 } from 'react-native';
-import { useFonts, DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
-import AppLoading from 'expo-app-loading';
 import styles from './LandingScreen.styles';
 import { PLACEHOLDER } from '../theme/colors';
+import useCustomFonts from '../lib/useCustomFonts';
+import Button from '../components/Button';
 
 export default function LandingScreen({ navigation }) {
   const [code, setCode] = useState('');
   const { width, height } = useWindowDimensions();
+  const { fontsLoaded, FontProvider } = useCustomFonts();
 
   const heroFade = useRef(new Animated.Value(0)).current;
   const labelFade = useRef(new Animated.Value(0)).current;
   const inputFade = useRef(new Animated.Value(0)).current;
   const footerFade = useRef(new Animated.Value(0)).current;
-
-  let [fontsLoaded] = useFonts({
-    DMSans_400Regular,
-    DMSans_500Medium,
-    DMSans_700Bold,
-  });
 
   useEffect(() => {
     if (!fontsLoaded) return;
@@ -57,9 +52,7 @@ export default function LandingScreen({ navigation }) {
     ]).start();
   }, [fontsLoaded]);
 
-  if (!fontsLoaded) {
-    return <AppLoading />;
-  }
+  if (!fontsLoaded) return <FontProvider />;
 
   const scale = width / 375;
   const s = (size) => Math.round(size * scale);
@@ -99,13 +92,12 @@ export default function LandingScreen({ navigation }) {
               onChangeText={setCode}
               autoCapitalize="characters"
             />
-            <TouchableOpacity
-              style={[styles.continueButton, { marginTop: height * 0.02, paddingVertical: s(14) }]}
+            <Button
+              title="Continue"
               onPress={() => navigation.navigate('PatientHome', { code })}
               disabled={!code}
-            >
-              <Text style={[styles.continueButtonText, { fontSize: s(16) }]}>Continue</Text>
-            </TouchableOpacity>
+              style={{ marginTop: height * 0.02 }}
+            />
           </Animated.View>
         </View>
       </View>

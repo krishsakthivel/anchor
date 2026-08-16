@@ -1,4 +1,11 @@
+import React from 'react';
 import RootNavigator from './navigation/RootNavigator';
+import ErrorBoundary from './components/ErrorBoundary';
+
 export default function App() {
-    return <RootNavigator />;
-  }
+  return (
+    <ErrorBoundary>
+      <RootNavigator />
+    </ErrorBoundary>
+  );
+}
