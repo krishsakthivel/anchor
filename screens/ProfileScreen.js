@@ -1,0 +1,156 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  ScrollView,
+  Alert,
+} from 'react-native';
+import { supabase } from '../lib/supabase';
+import useCustomFonts from '../lib/useCustomFonts';
+import Button from '../components/Button';
+import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
+
+export default function ProfileScreen({ navigation }) {
+  const { width } = useWindowDimensions();
+  const { fontsLoaded, FontProvider } = useCustomFonts();
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [caregiverPhone, setCaregiverPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [isPatient, setIsPatient] = useState(false);
+
+  const scale = width / 375;
+  const s = (size) => Math.round(size * scale);
+
+  const fetchData = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    setEmail(user.email || '');
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+
+    if (profile) {
+      setFullName(profile.full_name || '');
+      setPhone(profile.phone || '');
+      setIsPatient(profile.role === 'patient');
+    }
+
+    if (profile?.role === 'caregiver') {
+      const { data: cp } = await supabase
+        .from('caregiver_phone')
+        .select('phone')
+        .eq('user_id', user.id)
+        .single();
+
+      if (cp) setCaregiverPhone(cp.phone || '');
+    }
+  };
+
+  useEffect(() => { fetchData(); }, []);
+
+  if (!fontsLoaded) return <FontProvider />;
+
+  const handleSave = async () => {
+    setLoading(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
+    const { error } = await supabase
+      .from('profiles')
+      .upsert({
+        id: user.id,
+        full_name: fullName.trim(),
+        phone: phone.trim(),
+      });
+
+    if (error) {
+      setLoading(false);
+      Alert.alert('Error', 'Failed to save profile.');
+      return;
+    }
+
+    if (!isPatient && caregiverPhone.trim()) {
+      await supabase
+        .from('caregiver_phone')
+        .upsert({
+          user_id: user.id,
+          phone: caregiverPhone.trim(),
+        });
+    }
+
+    setLoading(false);
+    Alert.alert('Saved', 'Profile updated.');
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+  };
+
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: WHITE }}>
+      <View style={{ padding: s(20) }}>
+        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY, marginBottom: s(20) }}>Profile</Text>
+
+        <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666', marginBottom: s(16) }}>{email}</Text>
+
+        <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Full Name</Text>
+        <TextInput
+          style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }}
+          placeholder="Your name"
+          placeholderTextColor={PLACEHOLDER}
+          value={fullName}
+          onChangeText={setFullName}
+        />
+
+        <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Phone</Text>
+        <TextInput
+          style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }}
+          placeholder="+1 555 555 5555"
+          placeholderTextColor={PLACEHOLDER}
+          value={phone}
+          onChangeText={setPhone}
+          keyboardType="phone-pad"
+        />
+
+        {!isPatient && (
+          <>
+            <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Your Phone (for patients to call)</Text>
+            <TextInput
+              style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }}
+              placeholder="+1 555 555 5555"
+              placeholderTextColor={PLACEHOLDER}
+              value={caregiverPhone}
+              onChangeText={setCaregiverPhone}
+              keyboardType="phone-pad"
+            />
+          </>
+        )}
+
+        <Button
+          title={loading ? 'Saving...' : 'Save'}
+          onPress={handleSave}
+          disabled={loading}
+          loading={loading}
+          style={{ marginBottom: s(12) }}
+        />
+
+        <Button
+          title="Sign Out"
+          onPress={handleSignOut}
+          style={{ backgroundColor: '#C0392B' }}
+        />
+      </View>
+    </ScrollView>
+  );
+}

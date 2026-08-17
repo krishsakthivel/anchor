@@ -166,12 +166,20 @@ export default function CaregiverHomeScreen({ navigation }) {
               ))
             )}
 
-            <View style={{ marginTop: s(24) }}>
-              <Button
-                title="Sign Out"
-                onPress={handleSignOut}
-                style={{ backgroundColor: '#C0392B' }}
-              />
+            <View style={{ flexDirection: 'row', marginTop: s(24) }}>
+              <View style={{ flex: 1, marginRight: s(6) }}>
+                <Button
+                  title="Profile"
+                  onPress={() => navigation.navigate('Profile')}
+                />
+              </View>
+              <View style={{ flex: 1, marginLeft: s(6) }}>
+                <Button
+                  title="Sign Out"
+                  onPress={handleSignOut}
+                  style={{ backgroundColor: '#C0392B' }}
+                />
+              </View>
             </View>
           </>
         }

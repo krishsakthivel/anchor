@@ -26,6 +26,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 14,
+    alignSelf: 'stretch',
   },
   disabled: {
     opacity: 0.5,

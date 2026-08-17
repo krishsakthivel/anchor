@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, View, StyleSheet } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
@@ -10,6 +11,7 @@ import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
 import PatientHomeScreen from '../screens/PatientHomeScreen';
 import CaregiverHomeScreen from '../screens/CaregiverHomeScreen';
 import PatientDetailScreen from '../screens/PatientDetailScreen';
+import ProfileScreen from '../screens/ProfileScreen';
 import { supabase } from '../lib/supabase';
 
 const Stack = createNativeStackNavigator();
@@ -32,24 +34,31 @@ export default function RootNavigator() {
 
   if (initialRoute === null) {
     return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color="#0F2C6B" />
-      </View>
+      <SafeAreaProvider>
+        <View style={styles.loading}>
+          <ActivityIndicator size="large" color="#0F2C6B" />
+        </View>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator initialRouteName={initialRoute} screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Landing" component={LandingScreen} />
-        <Stack.Screen name="CaregiverLogin" component={CaregiverLoginScreen} />
-        <Stack.Screen name="CaregiverRegister" component={CaregiverRegisterScreen} />
-        <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-        <Stack.Screen name="PatientHome" component={PatientHomeScreen} />
-        <Stack.Screen name="CaregiverHome" component={CaregiverHomeScreen} />
-        <Stack.Screen name="PatientDetail" component={PatientDetailScreen} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <SafeAreaProvider>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
+        <NavigationContainer>
+          <Stack.Navigator initialRouteName={initialRoute} screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="Landing" component={LandingScreen} />
+            <Stack.Screen name="CaregiverLogin" component={CaregiverLoginScreen} />
+            <Stack.Screen name="CaregiverRegister" component={CaregiverRegisterScreen} />
+            <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+            <Stack.Screen name="PatientHome" component={PatientHomeScreen} />
+            <Stack.Screen name="CaregiverHome" component={CaregiverHomeScreen} />
+            <Stack.Screen name="PatientDetail" component={PatientDetailScreen} />
+            <Stack.Screen name="Profile" component={ProfileScreen} />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 

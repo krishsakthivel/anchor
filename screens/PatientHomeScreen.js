@@ -15,7 +15,7 @@ const MOODS = [
   { value: 5, emoji: '😊' },
 ];
 
-export default function PatientHomeScreen({ route }) {
+export default function PatientHomeScreen({ route, navigation }) {
   const { width } = useWindowDimensions();
   const { fontsLoaded, FontProvider } = useCustomFonts();
   const [patient, setPatient] = useState(null);
@@ -261,6 +261,10 @@ export default function PatientHomeScreen({ route }) {
           )}
 
           <View style={{ marginTop: s(24) }}>
+            <TouchableOpacity onPress={() => navigation.navigate('Profile')} style={{ backgroundColor: '#F0F4FF', padding: s(14), borderRadius: 8, alignItems: 'center', marginBottom: s(10) }}>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>Profile</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity onPress={() => setVitalsVisible(true)} style={{ backgroundColor: '#F0F4FF', padding: s(14), borderRadius: 8, alignItems: 'center', marginBottom: s(10) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>Log Vitals</Text>
             </TouchableOpacity>
