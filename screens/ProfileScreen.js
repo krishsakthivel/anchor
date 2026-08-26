@@ -90,11 +90,19 @@ export default function ProfileScreen({ navigation }) {
     }
 
     setLoading(false);
-    Alert.alert('Saved', 'Profile updated.');
+    navigation.goBack();
   };
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
+  };
+
+  const handleBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('Landing');
+    }
   };
 
   return (
@@ -149,6 +157,12 @@ export default function ProfileScreen({ navigation }) {
           title="Sign Out"
           onPress={handleSignOut}
           style={{ backgroundColor: '#C0392B' }}
+        />
+
+        <Button
+          title="Go Back"
+          onPress={handleBack}
+          style={{ backgroundColor: '#343434', marginTop: s(32), alignSelf: 'center', width: '78%' }}
         />
       </View>
     </ScrollView>

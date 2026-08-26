@@ -8,10 +8,10 @@ import Button from '../components/Button';
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const MOODS = [
-  { value: 1, emoji: '😢' },
-  { value: 2, emoji: '😟' },
-  { value: 3, emoji: '😐' },
-  { value: 4, emoji: '🙂' },
+  { value: 1, emoji: '🤒' },
+  { value: 2, emoji: '😢' },
+  { value: 3, emoji: '😟' },
+  { value: 4, emoji: '😐' },
   { value: 5, emoji: '😊' },
 ];
 
@@ -42,6 +42,14 @@ export default function PatientHomeScreen({ route, navigation }) {
   const code = route?.params?.code;
   const patientId = route?.params?.patientId;
   const today = DAYS[new Date().getDay()];
+  const hour = new Date().getHours();
+  let greeting = 'Evening';
+
+  if (hour < 12) {
+    greeting = 'Morning';
+  } else if (hour < 18) {
+    greeting = 'Afternoon';
+  }
 
   const fetchData = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -128,6 +136,15 @@ export default function PatientHomeScreen({ route, navigation }) {
     setMoodLoading(true);
     await supabase.from('mood_logs').insert({ patient_id: patient.id, mood: selectedMood, note: moodNote.trim() || null });
     setMoodLoading(false);
+
+    let message = 'Thanks for checking in today!';
+    if (selectedMood <= 2) {
+      message = 'Sorry you feel like that. Hope you feel better today!';
+    } else if (selectedMood >= 4) {
+      message = 'Glad you are feeling good today!';
+    }
+
+    Alert.alert('Mood logged', message);
     setMoodVisible(false);
     setSelectedMood(null);
     setMoodNote('');
@@ -170,9 +187,7 @@ export default function PatientHomeScreen({ route, navigation }) {
       renderItem={null}
       ListHeaderComponent={
         <View style={{ padding: s(20) }}>
-          <Text style={[styles.title, { fontSize: s(22), marginBottom: s(4) }]}>
-            Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 18 ? 'Afternoon' : 'Evening'}
-          </Text>
+          <Text style={[styles.title, { fontSize: s(22), marginBottom: s(4) }]}>Good {greeting}</Text>
           {patient && <Text style={[styles.subtitle, { fontSize: s(14), marginBottom: s(20) }]}>{patient.name}'s Day</Text>}
 
           {!moodToday && (
@@ -261,11 +276,11 @@ export default function PatientHomeScreen({ route, navigation }) {
           )}
 
           <View style={{ marginTop: s(24) }}>
-            <TouchableOpacity onPress={() => navigation.navigate('Profile')} style={{ backgroundColor: '#F0F4FF', padding: s(14), borderRadius: 8, alignItems: 'center', marginBottom: s(10) }}>
+            <TouchableOpacity onPress={() => navigation.navigate('Profile')} style={{ backgroundColor: '#DEEEFA', padding: s(14), borderRadius: 8, alignItems: 'center', marginBottom: s(10) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>Profile</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => setVitalsVisible(true)} style={{ backgroundColor: '#F0F4FF', padding: s(14), borderRadius: 8, alignItems: 'center', marginBottom: s(10) }}>
+            <TouchableOpacity onPress={() => setVitalsVisible(true)} style={{ backgroundColor: '#DEEEFA', padding: s(14), borderRadius: 8, alignItems: 'center', marginBottom: s(10) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>Log Vitals</Text>
             </TouchableOpacity>
 
@@ -286,7 +301,7 @@ export default function PatientHomeScreen({ route, navigation }) {
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
               <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
                 <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>How are you feeling?</Text>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(16) }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(16), transform: [{ translateX: s(-16) }] }}>
                   {MOODS.map((m) => (
                     <TouchableOpacity key={m.value} onPress={() => setSelectedMood(m.value)} style={{ alignItems: 'center', padding: s(10), borderRadius: 12, backgroundColor: selectedMood === m.value ? '#F0F4FF' : 'transparent', borderWidth: selectedMood === m.value ? 2 : 0, borderColor: NAVY }}>
                       <Text style={{ fontSize: s(32) }}>{m.emoji}</Text>
@@ -295,7 +310,7 @@ export default function PatientHomeScreen({ route, navigation }) {
                 </View>
                 <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(16) }} placeholder="Add a note (optional)" placeholderTextColor={PLACEHOLDER} value={moodNote} onChangeText={setMoodNote} />
                 <Button title={moodLoading ? 'Logging...' : 'Log Mood'} onPress={handleLogMood} disabled={!selectedMood || moodLoading} loading={moodLoading} style={{ marginBottom: s(8) }} />
-                <Button title="Cancel" onPress={() => { setMoodVisible(false); setSelectedMood(null); setMoodNote(''); }} style={{ backgroundColor: '#999' }} />
+                <Button title="Cancel" onPress={() => { setMoodVisible(false); setSelectedMood(null); setMoodNote(''); }} style={{ backgroundColor: '#555', opacity: selectedMood ? 0.8 : 0.4 }} />
               </View>
             </View>
           </Modal>

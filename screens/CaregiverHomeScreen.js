@@ -17,10 +17,9 @@ import Button from '../components/Button';
 import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
 
 const generateCode = () => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
   for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
+    code += Math.floor(Math.random() * 10);
   }
   return code;
 };
@@ -124,6 +123,14 @@ export default function CaregiverHomeScreen({ navigation }) {
     await supabase.auth.signOut();
   };
 
+  const handleBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('Landing');
+    }
+  };
+
   return (
     <View style={styles.container}>
       <FlatList
@@ -131,6 +138,12 @@ export default function CaregiverHomeScreen({ navigation }) {
         renderItem={null}
         ListHeaderComponent={
           <>
+            <TouchableOpacity
+              onPress={handleBack}
+              style={{ alignSelf: 'flex-start', marginBottom: s(12), paddingVertical: s(6) }}
+            >
+              <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(15), color: NAVY }}>← Back</Text>
+            </TouchableOpacity>
             <Text style={[styles.title, { fontSize: s(24), marginBottom: s(8) }]}>Caregiver Home</Text>
             <Text style={[styles.subtitle, { fontSize: s(15), marginBottom: s(24) }]}>
               Manage your patients
