@@ -8,14 +8,11 @@ import {
   Platform,
   useWindowDimensions,
   TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
 import styles from './CaregiverLoginScreen.styles';
 import { PLACEHOLDER, WHITE } from '../theme/colors';
 import { supabase } from '../lib/supabase';
-import useCustomFonts from '../lib/useCustomFonts';
-import Button from '../components/Button';
-
-const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
 export default function CaregiverLoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
@@ -23,26 +20,12 @@ export default function CaregiverLoginScreen({ navigation }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { width, height } = useWindowDimensions();
-  const { fontsLoaded, FontProvider } = useCustomFonts();
-
-  if (!fontsLoaded) return <FontProvider />;
 
   const scale = width / 375;
   const s = (size) => Math.round(size * scale);
 
   const handleLogin = async () => {
     setError('');
-
-    if (!isValidEmail(email)) {
-      setError('Please enter a valid email address');
-      return;
-    }
-
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
-
     setLoading(true);
 
     const { error: signInError } = await supabase.auth.signInWithPassword({
@@ -112,18 +95,20 @@ export default function CaregiverLoginScreen({ navigation }) {
           <Text style={[styles.errorText, { fontSize: s(13), marginBottom: height * 0.02 }]}>{error}</Text>
         ) : null}
 
-        <Button
-          title="Log In"
+        <TouchableOpacity
+          style={[
+            styles.loginButton,
+            (!email || !password || loading) && styles.loginButtonDisabled,
+            { paddingVertical: s(14), marginBottom: height * 0.02 },
+          ]}
           onPress={handleLogin}
           disabled={!email || !password || loading}
-          loading={loading}
-          style={{ marginBottom: height * 0.02 }}
-        />
-
-        <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
-          <Text style={[styles.registerText, { fontSize: s(14), marginBottom: height * 0.02 }]}>
-            Forgot password?
-          </Text>
+        >
+          {loading ? (
+            <ActivityIndicator color={WHITE} />
+          ) : (
+            <Text style={[styles.loginButtonText, { fontSize: s(16) }]}>Log In</Text>
+          )}
         </TouchableOpacity>
 
         <Text style={[styles.registerText, { fontSize: s(14), marginBottom: height * 0.02 }]}>

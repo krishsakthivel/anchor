@@ -10,6 +10,7 @@ export default StyleSheet.create({
   centerContent: {
     flex: 1,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   hero: {
     alignItems: 'center',
@@ -18,7 +19,6 @@ export default StyleSheet.create({
     fontFamily: 'DMSans_500Medium',
     color: NAVY,
     textAlign: 'center',
-    alignSelf: 'center',
   },
   formSection: {
     width: '100%',
@@ -51,7 +51,6 @@ export default StyleSheet.create({
   footerText: {
     fontFamily: 'DMSans_400Regular',
     color: TEXT_DARK,
-    textAlign: 'center',
   },
   footerLink: {
     fontFamily: 'DMSans_700Bold',
