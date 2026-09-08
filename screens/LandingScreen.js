@@ -10,10 +10,9 @@ import {
   Animated,
   TouchableOpacity,
 } from 'react-native';
-import { useFonts, DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
-import AppLoading from 'expo-app-loading';
 import styles from './LandingScreen.styles';
 import { PLACEHOLDER } from '../theme/colors';
+import Button from '../components/Button';
 
 export default function LandingScreen({ navigation }) {
   const [code, setCode] = useState('');
@@ -24,15 +23,7 @@ export default function LandingScreen({ navigation }) {
   const inputFade = useRef(new Animated.Value(0)).current;
   const footerFade = useRef(new Animated.Value(0)).current;
 
-  let [fontsLoaded] = useFonts({
-    DMSans_400Regular,
-    DMSans_500Medium,
-    DMSans_700Bold,
-  });
-
   useEffect(() => {
-    if (!fontsLoaded) return;
-
     Animated.stagger(200, [
       Animated.timing(heroFade, {
         toValue: 1,
@@ -55,11 +46,8 @@ export default function LandingScreen({ navigation }) {
         useNativeDriver: true,
       }),
     ]).start();
-  }, [fontsLoaded]);
+  }, []);
 
-  if (!fontsLoaded) {
-    return <AppLoading />;
-  }
 
   const scale = width / 375;
   const s = (size) => Math.round(size * scale);
@@ -88,24 +76,25 @@ export default function LandingScreen({ navigation }) {
               { fontSize: s(17), marginBottom: height * 0.015, opacity: labelFade, textAlign: 'center' },
             ]}
           >
-            Type the code your caregiver gave you :)
+            Enter the code your caregiver gave you :)
           </Animated.Text>
           <Animated.View style={{ opacity: inputFade }}>
             <TextInput
-              style={[styles.input, { fontSize: s(18), paddingVertical: s(14), paddingHorizontal: s(16) }]}
-              placeholder="Ex. 9AKDA7"
+              style={[styles.input, { fontSize: s(22), paddingVertical: s(18), paddingHorizontal: s(16), textAlign: 'center', letterSpacing: s(2) }]}
+              placeholder="Enter 6 digit code"
               placeholderTextColor={PLACEHOLDER}
               value={code}
+              keyboardType="number-pad"
+              inputMode="numeric"
+              maxLength={6}
               onChangeText={setCode}
-              autoCapitalize="characters"
             />
-            <TouchableOpacity
-              style={[styles.continueButton, { marginTop: height * 0.02, paddingVertical: s(14) }]}
+            <Button
+              title="Continue"
               onPress={() => navigation.navigate('PatientHome', { code })}
-              disabled={!code}
-            >
-              <Text style={[styles.continueButtonText, { fontSize: s(16) }]}>Continue</Text>
-            </TouchableOpacity>
+              disabled={code.length !== 6}
+              style={{ marginTop: height * 0.02 }}
+            />
           </Animated.View>
         </View>
       </View>

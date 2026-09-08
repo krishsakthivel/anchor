@@ -11,7 +11,6 @@ import {
 import styles from './CaregiverLoginScreen.styles';
 import { PLACEHOLDER } from '../theme/colors';
 import { supabase } from '../lib/supabase';
-import useCustomFonts from '../lib/useCustomFonts';
 import Button from '../components/Button';
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -22,9 +21,7 @@ export default function ForgotPasswordScreen({ navigation }) {
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const { width, height } = useWindowDimensions();
-  const { fontsLoaded, FontProvider } = useCustomFonts();
 
-  if (!fontsLoaded) return <FontProvider />;
 
   const scale = width / 375;
   const s = (size) => Math.round(size * scale);

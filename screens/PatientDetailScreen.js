@@ -12,7 +12,6 @@ import {
   ScrollView,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
-import useCustomFonts from '../lib/useCustomFonts';
 import Button from '../components/Button';
 import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
 
@@ -22,7 +21,6 @@ const TABS = ['Medications', 'Tasks', 'Notes', 'Vitals', 'Appointments', 'Mood',
 export default function PatientDetailScreen({ route, navigation }) {
   const { patientId, patientName } = route.params;
   const { width } = useWindowDimensions();
-  const { fontsLoaded, FontProvider } = useCustomFonts();
   const [activeTab, setActiveTab] = useState('Medications');
   const [medications, setMedications] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -68,7 +66,6 @@ export default function PatientDetailScreen({ route, navigation }) {
     setRefreshing(false);
   };
 
-  if (!fontsLoaded) return <FontProvider />;
 
   const handleAddMedication = async () => {
     if (!medName.trim()) return;

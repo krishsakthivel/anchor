@@ -10,7 +10,6 @@ export default StyleSheet.create({
   centerContent: {
     flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
   },
   logo: {
     alignSelf: 'center',
@@ -19,11 +18,13 @@ export default StyleSheet.create({
     fontFamily: 'DMSans_700Bold',
     color: NAVY,
     textAlign: 'center',
+    alignSelf: 'center',
   },
   subtitle: {
     fontFamily: 'DMSans_400Regular',
     color: TEXT_DARK,
     textAlign: 'center',
+    alignSelf: 'center',
   },
   label: {
     fontFamily: 'DMSans_500Medium',

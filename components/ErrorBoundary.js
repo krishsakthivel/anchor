@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { NAVY, WHITE } from '../theme/colors';
 
 export default class ErrorBoundary extends React.Component {
@@ -12,12 +12,19 @@ export default class ErrorBoundary extends React.Component {
     return { hasError: true, error };
   }
 
+  handleRetry = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
   render() {
     if (this.state.hasError) {
       return (
         <View style={styles.container}>
           <Text style={styles.title}>Something went wrong</Text>
           <Text style={styles.message}>{this.state.error?.message || 'An unexpected error occurred.'}</Text>
+          <TouchableOpacity onPress={this.handleRetry} style={styles.retryButton}>
+            <Text style={styles.retryText}>Try Again</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -44,5 +51,17 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#666',
     textAlign: 'center',
+    marginBottom: 24,
+  },
+  retryButton: {
+    backgroundColor: NAVY,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+  },
+  retryText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 16,
+    color: WHITE,
   },
 });
