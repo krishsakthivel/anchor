@@ -531,7 +531,8 @@ function MoodTab({ patientId }) {
 
   useEffect(() => { fetchMoods(); }, []);
 
-  const getEmoji = (mood) => ({ 1: '😢', 2: '😟', 3: '😐', 4: '🙂', 5: '😊' }[mood] || '😐');
+  // Must match the patient's mood scale (see PatientHomeScreen MOODS).
+  const getEmoji = (mood) => ({ 1: '🤒', 2: '😢', 3: '😟', 4: '😐', 5: '😊' }[mood] || '😐');
 
   return (
     <>

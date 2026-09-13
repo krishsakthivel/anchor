@@ -13,6 +13,14 @@ const MOODS = [
   { value: 4, emoji: '😐' },
   { value: 5, emoji: '😊' },
 ];
+const VITAL_UNITS = {
+  blood_pressure: 'mmHg',
+  blood_sugar: 'mg/dL',
+  weight: 'lbs',
+  temperature: '°F',
+  heart_rate: 'bpm',
+  oxygen: '%',
+};
 
 export default function PatientHomeScreen({ route, navigation }) {
   const { width } = useWindowDimensions();
@@ -110,9 +118,11 @@ export default function PatientHomeScreen({ route, navigation }) {
 
     const { data: schedules } = await supabase.from('medication_schedule').select('*').eq('patient_id', patientData.id).eq('active', true);
     const { data: meds } = await supabase.from('medications').select('*').eq('patient_id', patientData.id);
+    // Meds with no schedule row (caregiver didn't set a time) have no daily
+    // restriction — treat them as due every day so they never go missing.
     const todayMeds = (meds || []).filter((med) => {
       const schedule = (schedules || []).find((s) => s.medication_id === med.id);
-      return schedule && schedule.days.includes(today);
+      return !schedule || (schedule.days || '').includes(today);
     });
     setMedications(todayMeds);
 
@@ -218,7 +228,7 @@ export default function PatientHomeScreen({ route, navigation }) {
     setVitalLoading(true);
     setVitalError('');
     try {
-      const { error } = await supabase.from('vital_signs').insert({ patient_id: patient.id, type: vitalType, value: vitalValue.trim(), unit: '' });
+      const { error } = await supabase.from('vital_signs').insert({ patient_id: patient.id, type: vitalType, value: vitalValue.trim(), unit: VITAL_UNITS[vitalType] || '' });
       if (error) {
         console.error('vital_signs insert failed', error);
         setVitalError(error.message || 'Could not save. Please try again.');
@@ -511,7 +521,9 @@ export default function PatientHomeScreen({ route, navigation }) {
                   ))}
                 </View>
                 {vitalType && (
-                  <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(18), color: NAVY, marginBottom: s(16) }} placeholder="Value" placeholderTextColor={PLACEHOLDER} value={vitalValue} onChangeText={setVitalValue} keyboardType="decimal-pad" />
+                  // 'default' keyboard on purpose: entries like "120/80" can't be
+                  // typed on a decimal pad.
+                  <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(18), color: NAVY, marginBottom: s(16) }} placeholder="Value" placeholderTextColor={PLACEHOLDER} value={vitalValue} onChangeText={setVitalValue} keyboardType="default" />
                 )}
                 <Button title={vitalLoading ? 'Logging...' : 'Log'} onPress={handleLogVital} disabled={!vitalType || !vitalValue.trim() || vitalLoading} loading={vitalLoading} style={{ borderRadius: 8, marginBottom: s(8) }} />
                 <Button title="Cancel" onPress={() => { if (vitalLoading) return; setVitalsVisible(false); setVitalType(''); setVitalValue(''); setVitalError(''); }} style={{ backgroundColor: MUTED, borderRadius: 8 }} />

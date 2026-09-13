@@ -210,7 +210,7 @@ export default function VitalsScreen({ route }) {
                     placeholderTextColor={PLACEHOLDER}
                     value={vitalValue}
                     onChangeText={setVitalValue}
-                    keyboardType="decimal-pad"
+                    keyboardType="default"
                   />
 
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Note (optional)</Text>

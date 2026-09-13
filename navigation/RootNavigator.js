@@ -14,6 +14,11 @@ import CaregiverHomeScreen from '../screens/CaregiverHomeScreen';
 import PatientDetailScreen from '../screens/PatientDetailScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import PatientProfileScreen from '../screens/PatientProfileScreen';
+import AppointmentsScreen from '../screens/AppointmentsScreen';
+import CareNotesScreen from '../screens/CareNotesScreen';
+import MoodCheckinScreen from '../screens/MoodCheckinScreen';
+import VitalsScreen from '../screens/VitalsScreen';
+import WeeklyReportScreen from '../screens/WeeklyReportScreen';
 import { supabase } from '../lib/supabase';
 
 const Stack = createNativeStackNavigator();
@@ -21,6 +26,10 @@ const Stack = createNativeStackNavigator();
 export default function RootNavigator() {
   const [initialRoute, setInitialRoute] = React.useState(null);
   const [initialPatientId, setInitialPatientId] = React.useState(null);
+  // Ref mirror of initialRoute: the auth-state subscription closes over the
+  // first render's state, so reading the state variable inside its callback
+  // would always see null.
+  const initialRouteRef = React.useRef(null);
   const [fontsLoaded] = useFonts({
     DMSans_400Regular,
     DMSans_500Medium,
@@ -29,14 +38,12 @@ export default function RootNavigator() {
 
   React.useEffect(() => {
     const resolveRoute = async (session) => {
+      let route;
       if (!session) {
-        setInitialRoute('Landing');
-        return;
-      }
-
-      // Patients authenticate anonymously (no email/password), so an
-      // anonymous session means this is a patient, not a caregiver.
-      if (session.user?.is_anonymous) {
+        route = 'Landing';
+      } else if (session.user?.is_anonymous) {
+        // Patients authenticate anonymously (no email/password), so an
+        // anonymous session means this is a patient, not a caregiver.
         const { data: patientRow } = await supabase
           .from('patients')
           .select('id')
@@ -45,12 +52,16 @@ export default function RootNavigator() {
 
         if (patientRow) {
           setInitialPatientId(patientRow.id);
-          setInitialRoute('PatientHome');
-          return;
+          route = 'PatientHome';
+        } else {
+          route = 'CaregiverHome';
         }
+      } else {
+        route = 'CaregiverHome';
       }
 
-      setInitialRoute('CaregiverHome');
+      initialRouteRef.current = route;
+      setInitialRoute(route);
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -58,7 +69,7 @@ export default function RootNavigator() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (initialRoute === null) return;
+      if (initialRouteRef.current === null) return;
       resolveRoute(session);
     });
 
@@ -93,6 +104,11 @@ export default function RootNavigator() {
             <Stack.Screen name="PatientDetail" component={PatientDetailScreen} />
             <Stack.Screen name="Profile" component={ProfileScreen} />
             <Stack.Screen name="PatientProfile" component={PatientProfileScreen} />
+            <Stack.Screen name="Appointments" component={AppointmentsScreen} />
+            <Stack.Screen name="CareNotes" component={CareNotesScreen} />
+            <Stack.Screen name="MoodCheckin" component={MoodCheckinScreen} />
+            <Stack.Screen name="Vitals" component={VitalsScreen} />
+            <Stack.Screen name="WeeklyReport" component={WeeklyReportScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaView>

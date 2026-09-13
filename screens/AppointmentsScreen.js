@@ -57,8 +57,24 @@ export default function AppointmentsScreen({ route }) {
     if (!title.trim() || !date.trim() || !time.trim()) return;
     setLoading(true);
 
+    // Free-text fields: validate before building a Date, because an invalid
+    // input makes toISOString() throw and crash the handler.
+    const dateStr = date.trim();
+    const timeStr = time.trim();
+    const parsed = new Date(`${dateStr}T${timeStr}:00`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr) || !/^\d{2}:\d{2}$/.test(timeStr) || isNaN(parsed.getTime())) {
+      setLoading(false);
+      Alert.alert('Invalid date or time', 'Please use YYYY-MM-DD for the date and HH:MM for the time.');
+      return;
+    }
+
     const { data: { user } } = await supabase.auth.getUser();
-    const appointmentTime = new Date(`${date}T${time}:00`).toISOString();
+    if (!user) {
+      setLoading(false);
+      Alert.alert('Error', 'Your session has expired. Please sign in again.');
+      return;
+    }
+    const appointmentTime = parsed.toISOString();
 
     const { error } = await supabase
       .from('appointments')

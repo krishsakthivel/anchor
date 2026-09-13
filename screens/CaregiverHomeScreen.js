@@ -90,15 +90,26 @@ async function getPatientSummaries(patientIds) {
     const patientTaskComps = taskComps.filter((c) => c.patient_id === patientId);
     const patientMeds = meds.filter((m) => m.patient_id === patientId);
 
+    const scheduledMedIds = new Set(patientSchedules.map((sc) => sc.medication_id));
     const todayMedIds = new Set(
       patientSchedules.filter((sc) => (sc.days || '').includes(today)).map((sc) => sc.medication_id)
     );
+    // Meds with no schedule row are due every day (mirrors patient home).
+    for (const med of patientMeds) {
+      if (!scheduledMedIds.has(med.id)) todayMedIds.add(med.id);
+    }
     const todayTaskIds = new Set(
       patientTasks.filter((t) => !t.days || t.days.includes(today)).map((t) => t.id)
     );
 
-    const medsDone = new Set(patientMedLogs.map((l) => l.medication_id));
-    const tasksDone = new Set(patientTaskComps.map((c) => c.task_id));
+    // Only successful statuses count toward the routine — 'skipped'/'missed'
+    // logs must not fill the progress bar.
+    const medsDone = new Set(
+      patientMedLogs.filter((l) => l.status === 'taken').map((l) => l.medication_id)
+    );
+    const tasksDone = new Set(
+      patientTaskComps.filter((c) => c.status === 'completed').map((c) => c.task_id)
+    );
 
     const routineTotal = todayMedIds.size + todayTaskIds.size;
     const routineDone =
