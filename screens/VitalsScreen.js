@@ -51,7 +51,7 @@ export default function VitalsScreen({ route }) {
     setVitals(data || []);
   };
 
-  useEffect(() => { fetchVitals(); }, []);
+  useEffect(() => { fetchVitals(); }, [patientId]);
 
   const onRefresh = async () => {
     setRefreshing(true);

@@ -260,6 +260,7 @@ export default function CaregiverHomeScreen({ navigation }) {
 
       if (patientError || !patient) {
         console.error('patients insert failed', patientError);
+        await supabase.from('pairing_codes').delete().eq('code', code);
         Alert.alert('Error', patientError?.message || 'Failed to add patient. Please try again.');
         return;
       }

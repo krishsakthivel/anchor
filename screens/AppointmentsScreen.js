@@ -43,7 +43,7 @@ export default function AppointmentsScreen({ route }) {
     setAppointments(data || []);
   };
 
-  useEffect(() => { fetchAppointments(); }, []);
+  useEffect(() => { fetchAppointments(); }, [patientId]);
 
   const onRefresh = async () => {
     setRefreshing(true);

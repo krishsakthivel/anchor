@@ -17,6 +17,7 @@ import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const TABS = ['Medications', 'Tasks', 'Notes', 'Vitals', 'Appointments', 'Mood', 'Report'];
+const REPORT_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 export default function PatientDetailScreen({ route, navigation }) {
   const { patientId, patientName } = route.params;
@@ -58,7 +59,7 @@ export default function PatientDetailScreen({ route, navigation }) {
     setTasks(taskData || []);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [patientId]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -72,6 +73,18 @@ export default function PatientDetailScreen({ route, navigation }) {
     setLoading(true);
 
     const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setLoading(false);
+      Alert.alert('Session expired', 'Please sign in again before adding medication.');
+      return;
+    }
+
+    const enteredTime = medTime.trim();
+    if (enteredTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(enteredTime)) {
+      setLoading(false);
+      Alert.alert('Invalid time', 'Use 24-hour HH:MM format, for example 08:30.');
+      return;
+    }
 
     const { data: med, error } = await supabase
       .from('medications')
@@ -93,16 +106,23 @@ export default function PatientDetailScreen({ route, navigation }) {
       return;
     }
 
-    if (medTime.trim()) {
-      await supabase
+    if (enteredTime) {
+      const { error: scheduleError } = await supabase
         .from('medication_schedule')
         .insert({
           medication_id: med.id,
           patient_id: patientId,
-          time: medTime.trim(),
+          time: enteredTime,
           frequency: 'daily',
           days: JSON.stringify(DAYS),
         });
+
+      if (scheduleError) {
+        await supabase.from('medications').delete().eq('id', med.id);
+        setLoading(false);
+        Alert.alert('Error', 'Medication was not saved because its schedule could not be created.');
+        return;
+      }
     }
 
     setLoading(false);
@@ -121,6 +141,18 @@ export default function PatientDetailScreen({ route, navigation }) {
     setLoading(true);
 
     const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setLoading(false);
+      Alert.alert('Session expired', 'Please sign in again before adding a task.');
+      return;
+    }
+
+    const enteredTime = taskTime.trim();
+    if (enteredTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(enteredTime)) {
+      setLoading(false);
+      Alert.alert('Invalid time', 'Use 24-hour HH:MM format, for example 08:30.');
+      return;
+    }
 
     const { error } = await supabase
       .from('tasks')
@@ -128,7 +160,7 @@ export default function PatientDetailScreen({ route, navigation }) {
         patient_id: patientId,
         title: taskTitle.trim(),
         description: taskDesc.trim() || null,
-        time: taskTime.trim() || null,
+        time: enteredTime || null,
         frequency: 'daily',
         days: JSON.stringify(DAYS),
         created_by: user.id,
@@ -185,7 +217,7 @@ export default function PatientDetailScreen({ route, navigation }) {
         onPress: async () => {
           await supabase
             .from('medications')
-            .update({ pills_remaining: (med.pills_remaining || 0) - 1 })
+            .update({ pills_remaining: Math.max(0, (med.pills_remaining || 0) - 1) })
             .eq('id', med.id);
           fetchData();
         },
@@ -393,12 +425,17 @@ function CareNotesTab({ patientId }) {
     setNotes(data || []);
   };
 
-  useEffect(() => { fetchNotes(); }, []);
+  useEffect(() => { fetchNotes(); }, [patientId]);
 
   const handleAdd = async () => {
     if (!noteTitle.trim() || !noteBody.trim()) return;
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setLoading(false);
+      Alert.alert('Session expired', 'Please sign in again before adding a note.');
+      return;
+    }
     await supabase.from('care_notes').insert({ patient_id: patientId, created_by: user.id, title: noteTitle.trim(), body: noteBody.trim() });
     setLoading(false);
     setAddVisible(false);
@@ -455,7 +492,7 @@ function VitalsTab({ patientId }) {
     setVitals(data || []);
   };
 
-  useEffect(() => { fetchVitals(); }, []);
+  useEffect(() => { fetchVitals(); }, [patientId]);
 
   const getTypeIcon = (type) => ({ blood_pressure: '❤️', blood_sugar: '🩸', weight: '⚖️', temperature: '🌡️', heart_rate: '💓', oxygen: '💨' }[type] || '📊');
   const getTypeLabel = (type) => ({ blood_pressure: 'Blood Pressure', blood_sugar: 'Blood Sugar', weight: 'Weight', temperature: 'Temperature', heart_rate: 'Heart Rate', oxygen: 'Oxygen' }[type] || type);
@@ -491,7 +528,7 @@ function AppointmentsTab({ patientId }) {
     setAppointments(data || []);
   };
 
-  useEffect(() => { fetchAppts(); }, []);
+  useEffect(() => { fetchAppts(); }, [patientId]);
 
   const now = new Date();
   const upcoming = appointments.filter((a) => new Date(a.appointment_time) >= now && !a.completed);
@@ -529,7 +566,7 @@ function MoodTab({ patientId }) {
     setMoods(data || []);
   };
 
-  useEffect(() => { fetchMoods(); }, []);
+  useEffect(() => { fetchMoods(); }, [patientId]);
 
   // Must match the patient's mood scale (see PatientHomeScreen MOODS).
   const getEmoji = (mood) => ({ 1: '🤒', 2: '😢', 3: '😟', 4: '😐', 5: '😊' }[mood] || '😐');
@@ -568,19 +605,34 @@ function ReportTab({ patientId }) {
     const { data: medLogs } = await supabase.from('medication_log').select('*').eq('patient_id', patientId).gte('logged_at', weekAgo.toISOString());
     const { data: taskComps } = await supabase.from('task_completion').select('*').eq('patient_id', patientId).gte('completed_at', weekAgo.toISOString());
     const { data: meds } = await supabase.from('medications').select('id').eq('patient_id', patientId);
-    const { data: tasks } = await supabase.from('tasks').select('id').eq('patient_id', patientId).eq('active', true);
+    const { data: medicationSchedules } = await supabase
+      .from('medication_schedule')
+      .select('medication_id, days')
+      .eq('patient_id', patientId)
+      .eq('active', true);
+    const { data: tasks } = await supabase.from('tasks').select('id, days').eq('patient_id', patientId).eq('active', true);
 
     const medTaken = (medLogs || []).filter((l) => l.status === 'taken').length;
     const medMissed = (medLogs || []).filter((l) => l.status === 'missed').length;
     const taskDone = (taskComps || []).filter((c) => c.status === 'completed').length;
     const taskMissed = (taskComps || []).filter((c) => c.status === 'missed').length;
-    const totalMedSlots = (meds || []).length * 7;
-    const totalTaskSlots = (tasks || []).length * 7;
+    const reportDays = Array.from({ length: 7 }, (_, index) => REPORT_DAYS[index]);
+    const totalMedSlots = (meds || []).reduce((total, med) => {
+      const medSchedules = (medicationSchedules || []).filter((schedule) => schedule.medication_id === med.id);
+      if (!medSchedules.length) return total + 7;
+      return total + reportDays.reduce((count, day) => count + medSchedules.filter((schedule) => (
+        Array.isArray(schedule.days) && schedule.days.includes(day)
+      )).length, 0);
+    }, 0);
+    const totalTaskSlots = (tasks || []).reduce((total, task) => {
+      const configuredDays = Array.isArray(task.days) ? task.days : [];
+      return total + (configuredDays.length ? reportDays.filter((day) => configuredDays.includes(day)).length : 7);
+    }, 0);
 
     setReport({ medTaken, medMissed, taskDone, taskMissed, totalMedSlots, totalTaskSlots });
   };
 
-  useEffect(() => { fetchReport(); }, []);
+  useEffect(() => { fetchReport(); }, [patientId]);
 
   if (!report) return <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>Loading...</Text>;
 

@@ -40,7 +40,7 @@ export default function CareNotesScreen({ route }) {
     setNotes(data || []);
   };
 
-  useEffect(() => { fetchNotes(); }, []);
+  useEffect(() => { fetchNotes(); }, [patientId]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -55,6 +55,11 @@ export default function CareNotesScreen({ route }) {
     setLoading(true);
 
     const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setLoading(false);
+      Alert.alert('Session expired', 'Please sign in again before adding a note.');
+      return;
+    }
     const { error } = await supabase
       .from('care_notes')
       .insert({

@@ -48,7 +48,7 @@ export default function MoodCheckinScreen({ route }) {
     setMoodLogs(data || []);
   };
 
-  useEffect(() => { fetchMoods(); }, []);
+  useEffect(() => { fetchMoods(); }, [patientId]);
 
   const onRefresh = async () => {
     setRefreshing(true);

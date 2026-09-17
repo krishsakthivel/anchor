@@ -189,10 +189,6 @@ CREATE POLICY "Caregivers manage own codes"
   ON pairing_codes FOR ALL
   USING (auth.uid() = caregiver_id);
 
-CREATE POLICY "Anyone can read pairing codes"
-  ON pairing_codes FOR SELECT
-  USING (true);
-
 CREATE POLICY "Caregivers manage own patients"
   ON patients FOR ALL
   USING (auth.uid() = created_by);
@@ -247,6 +243,9 @@ CREATE POLICY "Patients log own medications"
     patient_id IN (
       SELECT id FROM patients WHERE paired_user_id = auth.uid()
     )
+    AND medication_id IN (
+      SELECT id FROM medications WHERE medications.patient_id = medication_log.patient_id
+    )
   );
 
 CREATE POLICY "Caregivers read patient medication logs"
@@ -282,6 +281,9 @@ CREATE POLICY "Patients complete own tasks"
   WITH CHECK (
     patient_id IN (
       SELECT id FROM patients WHERE paired_user_id = auth.uid()
+    )
+    AND task_id IN (
+      SELECT id FROM tasks WHERE tasks.patient_id = task_completion.patient_id
     )
   );
 
@@ -319,7 +321,7 @@ CREATE POLICY "Users read own notifications"
 
 CREATE POLICY "System creates notifications"
   ON notifications FOR INSERT
-  WITH CHECK (true);
+  WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Users update own notifications"
   ON notifications FOR UPDATE
@@ -431,7 +433,10 @@ BEGIN
   INSERT INTO profiles (id, role, full_name)
   VALUES (
     NEW.id,
-    COALESCE(NEW.raw_user_meta_data->>'role', 'caregiver'),
+    CASE
+      WHEN COALESCE(NEW.is_anonymous, FALSE) THEN 'patient'
+      ELSE COALESCE(NEW.raw_user_meta_data->>'role', 'caregiver')
+    END,
     COALESCE(NEW.raw_user_meta_data->>'full_name', '')
   );
   RETURN NEW;
@@ -441,3 +446,54 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
+
+-- Patients pair through this function instead of reading pairing_codes directly.
+-- SECURITY DEFINER is required because the anonymous patient session cannot update
+-- the caregiver-owned patients/pairing_codes rows under normal RLS policies.
+CREATE OR REPLACE FUNCTION claim_patient_code(p_code TEXT)
+RETURNS patients
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  code_row pairing_codes%ROWTYPE;
+  patient_row patients%ROWTYPE;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Authentication required';
+  END IF;
+
+  SELECT * INTO code_row
+  FROM pairing_codes
+  WHERE code = UPPER(TRIM(p_code))
+    AND used = FALSE
+  ORDER BY created_at DESC
+  LIMIT 1
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Invalid or already used pairing code';
+  END IF;
+
+  SELECT * INTO patient_row
+  FROM patients
+  WHERE pair_code = code_row.code
+    AND paired_user_id IS NULL
+  ORDER BY created_at DESC
+  LIMIT 1
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'This pairing code is no longer available';
+  END IF;
+
+  UPDATE pairing_codes SET used = TRUE WHERE id = code_row.id;
+  UPDATE patients
+  SET paired_user_id = auth.uid()
+  WHERE id = patient_row.id
+  RETURNING * INTO patient_row;
+
+  RETURN patient_row;
+END;
+$$;

@@ -60,7 +60,7 @@ export default function PatientProfileScreen({ navigation }) {
 
       const { error } = await supabase
         .from('profiles')
-        .upsert({ id: user.id, full_name: fullName.trim(), phone: phone.trim() });
+        .upsert({ id: user.id, full_name: fullName.trim(), phone: phone.trim(), role: 'patient' });
 
       if (error) {
         console.error('profiles upsert failed', error);

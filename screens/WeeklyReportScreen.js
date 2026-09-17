@@ -5,6 +5,27 @@ import useCustomFonts from '../lib/useCustomFonts';
 import { NAVY } from '../theme/colors';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const SCHEDULE_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+const expectedSlots = (items, schedules, now) => {
+  const days = [];
+  for (let i = 6; i >= 0; i -= 1) {
+    const date = new Date(now);
+    date.setDate(date.getDate() - i);
+    days.push(SCHEDULE_DAYS[date.getDay()]);
+  }
+
+  return (items || []).reduce((total, item) => {
+    const itemSchedules = (schedules || []).filter((schedule) => schedule.medication_id === item.id || schedule.task_id === item.id);
+    if (!itemSchedules.length) return total + 7;
+    return total + days.reduce((count, day) => (
+      count + itemSchedules.filter((schedule) => {
+        const configuredDays = Array.isArray(schedule.days) ? schedule.days : [];
+        return configuredDays.includes(day);
+      }).length
+    ), 0);
+  }, 0);
+};
 
 export default function WeeklyReportScreen({ route }) {
   const { patientId } = route.params;
@@ -50,9 +71,15 @@ export default function WeeklyReportScreen({ route }) {
       .select('id')
       .eq('patient_id', patientId);
 
+    const { data: medicationSchedules } = await supabase
+      .from('medication_schedule')
+      .select('medication_id, days')
+      .eq('patient_id', patientId)
+      .eq('active', true);
+
     const { data: tasks } = await supabase
       .from('tasks')
-      .select('id')
+      .select('id, days')
       .eq('patient_id', patientId)
       .eq('active', true);
 
@@ -75,8 +102,13 @@ export default function WeeklyReportScreen({ route }) {
       avgMoodByDay[day] = avg;
     });
 
-    const totalMedSlots = (meds || []).length * 7;
-    const totalTaskSlots = (tasks || []).length * 7;
+    const totalMedSlots = expectedSlots(meds, medicationSchedules, now);
+    const totalTaskSlots = (tasks || []).reduce((total, task) => {
+      const configuredDays = Array.isArray(task.days) ? task.days : [];
+      if (!configuredDays.length) return total + 7;
+      return total + Array.from({ length: 7 }, (_, index) => SCHEDULE_DAYS[index])
+        .filter((day) => configuredDays.includes(day)).length;
+    }, 0);
 
     setReport({
       medTaken,
@@ -91,7 +123,7 @@ export default function WeeklyReportScreen({ route }) {
     });
   };
 
-  useEffect(() => { fetchReport(); }, []);
+  useEffect(() => { fetchReport(); }, [patientId]);
 
   const onRefresh = async () => {
     setRefreshing(true);

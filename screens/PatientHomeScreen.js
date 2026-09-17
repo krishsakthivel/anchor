@@ -150,7 +150,7 @@ export default function PatientHomeScreen({ route, navigation }) {
     setLoadingInitial(false);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [patientId, code]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -162,6 +162,7 @@ export default function PatientHomeScreen({ route, navigation }) {
   const isTaskDone = (taskId) => taskCompletions.some((c) => c.task_id === taskId && c.status === 'completed');
 
   const handleLogMed = async (medId, status) => {
+    if (!patient || medLogs.some((log) => log.medication_id === medId)) return;
     const { error } = await supabase.from('medication_log').insert({ medication_id: medId, patient_id: patient.id, status });
     if (error) {
       console.error('medication_log insert failed', error);
@@ -172,6 +173,7 @@ export default function PatientHomeScreen({ route, navigation }) {
   };
 
   const handleCompleteTask = async (taskId, status) => {
+    if (!patient || taskCompletions.some((completion) => completion.task_id === taskId)) return;
     const { error } = await supabase.from('task_completion').insert({ task_id: taskId, patient_id: patient.id, status });
     if (error) {
       console.error('task_completion insert failed', error);
@@ -375,7 +377,7 @@ export default function PatientHomeScreen({ route, navigation }) {
                 return (
                   <TouchableOpacity
                     key={med.id}
-                    disabled={taken}
+                    disabled={taken || medLogs.some((log) => log.medication_id === med.id)}
                     activeOpacity={0.7}
                     onPress={() => Alert.alert('Mark Medication', `How did ${med.name} go?`, [
                       { text: 'Taken', onPress: () => handleLogMed(med.id, 'taken') },
@@ -417,7 +419,7 @@ export default function PatientHomeScreen({ route, navigation }) {
                 return (
                   <TouchableOpacity
                     key={task.id}
-                    disabled={done}
+                    disabled={done || taskCompletions.some((completion) => completion.task_id === task.id)}
                     activeOpacity={0.7}
                     onPress={() => Alert.alert('Complete Task', `Mark "${task.title}" as:`, [
                       { text: 'Done', onPress: () => handleCompleteTask(task.id, 'completed') },

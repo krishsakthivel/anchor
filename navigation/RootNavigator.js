@@ -57,7 +57,23 @@ export default function RootNavigator() {
           route = 'CaregiverHome';
         }
       } else {
-        route = 'CaregiverHome';
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', session.user.id)
+          .maybeSingle();
+
+        if (profile?.role === 'patient') {
+          const { data: patientRow } = await supabase
+            .from('patients')
+            .select('id')
+            .eq('paired_user_id', session.user.id)
+            .maybeSingle();
+          setInitialPatientId(patientRow?.id || null);
+          route = 'PatientHome';
+        } else {
+          route = 'CaregiverHome';
+        }
       }
 
       initialRouteRef.current = route;

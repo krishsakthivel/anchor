@@ -67,6 +67,7 @@ export default function ProfileScreen({ navigation }) {
         id: user.id,
         full_name: fullName.trim(),
         phone: phone.trim(),
+        role: 'caregiver',
       });
 
     if (error) {
