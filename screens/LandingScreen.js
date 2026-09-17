@@ -65,7 +65,7 @@ export default function LandingScreen({ navigation }) {
             resizeMode="contain"
           />
           <Text style={[styles.tagline, { fontSize: s(19), lineHeight: s(27), paddingHorizontal: s(10) }]}>
-            The simplest app to anchor a caregiver and a patient together.
+            Your daily routine, with your caregiver close by.
           </Text>
         </Animated.View>
 
@@ -76,7 +76,7 @@ export default function LandingScreen({ navigation }) {
               { fontSize: s(17), marginBottom: height * 0.015, opacity: labelFade, textAlign: 'center' },
             ]}
           >
-            Enter the code your caregiver gave you :)
+            Enter the six-digit code from your caregiver
           </Animated.Text>
           <Animated.View style={{ opacity: inputFade }}>
             <TextInput
@@ -101,9 +101,9 @@ export default function LandingScreen({ navigation }) {
 
       <Animated.View style={[styles.footer, { marginBottom: height * 0.05, opacity: footerFade }]}>
         <Text style={[styles.footerText, { fontSize: s(15) }]}>
-          Caregiver?{' '}
+          Are you a caregiver?{' '}
           <Text style={styles.footerLink} onPress={() => navigation.navigate('CaregiverLogin')}>
-            Click here.
+            Sign in.
           </Text>
         </Text>
       </Animated.View>

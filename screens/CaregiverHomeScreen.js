@@ -34,7 +34,6 @@ import {
 } from '../theme/colors';
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-const MOOD_EMOJI = { 1: '🤒', 2: '😢', 3: '😟', 4: '😐', 5: '😊' };
 
 const generateCode = () => {
   let code = '';
@@ -223,6 +222,7 @@ export default function CaregiverHomeScreen({ navigation }) {
 
 
   const alertCount = patients.filter((p) => p.lowStockCount > 0).length;
+  const routineInProgressCount = patients.filter((p) => p.routineTotal > 0 && p.routineDone < p.routineTotal).length;
 
   const handleAddPatient = async () => {
     const name = newPatientName.trim();
@@ -365,7 +365,8 @@ export default function CaregiverHomeScreen({ navigation }) {
         activeOpacity={0.75}
         onPress={() => navigation.navigate('PatientDetail', { patientId: item.id, patientName: item.name })}
         onLongPress={() => handleRemovePatient(item)}
-        style={[styles.card, { padding: s(14), borderRadius: 8, marginBottom: s(10) }]}
+        accessibilityLabel={`${item.name} care plan${item.lowStockCount > 0 ? ', medication running low' : ''}`}
+        style={[styles.card, { padding: s(16), borderRadius: 14, marginBottom: s(12) }]}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={[styles.avatar, { width: s(46), height: s(46), borderRadius: s(23) }]}>
@@ -395,16 +396,21 @@ export default function CaregiverHomeScreen({ navigation }) {
             </View>
           </View>
 
-          <Text style={{ fontSize: s(24) }}>{item.moodToday ? MOOD_EMOJI[item.moodToday] : ''}</Text>
+          <View style={{ alignItems: 'flex-end', marginLeft: s(6) }}>
+            <Ionicons name={item.moodToday ? 'chatbubble-ellipses-outline' : 'remove-circle-outline'} size={s(20)} color={item.moodToday ? SUCCESS : PLACEHOLDER} />
+            <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(10), color: item.moodToday ? SUCCESS : MUTED, marginTop: s(2) }}>
+              {item.moodToday ? 'Mood logged' : 'No check-in'}
+            </Text>
+          </View>
           <Ionicons name="chevron-forward" size={s(18)} color={PLACEHOLDER} style={{ marginLeft: s(4) }} />
         </View>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: s(12) }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: s(15), paddingTop: s(12), borderTopWidth: 1, borderTopColor: BORDER }}>
           {hasRoutine ? (
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(4) }}>
                 <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(12), color: TEXT_DARK }}>
-                  Today's routine
+                  Today’s routine
                 </Text>
                 <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(12), color: routineComplete ? SUCCESS : NAVY }}>
                   {item.routineDone}/{item.routineTotal}
@@ -435,6 +441,10 @@ export default function CaregiverHomeScreen({ navigation }) {
             </Text>
           </View>
         )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: s(12) }}>
+          <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(13), color: NAVY }}>View care plan</Text>
+          <Ionicons name="arrow-forward" size={s(15)} color={NAVY} style={{ marginLeft: s(5) }} />
+        </View>
       </TouchableOpacity>
     );
   };
@@ -480,29 +490,35 @@ export default function CaregiverHomeScreen({ navigation }) {
               </View>
             </View>
 
-            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY, marginTop: s(14) }}>
+            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(24), color: NAVY, marginTop: s(16) }}>
               Good {greeting}{caregiverName ? `, ${caregiverName}` : ''}
             </Text>
 
             {patients.length > 0 && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: s(14) }}>
-                <Ionicons name="people-outline" size={s(14)} color={MUTED} />
-                <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: MUTED, marginLeft: s(6) }}>
-                  {patients.length} {patients.length === 1 ? 'patient' : 'patients'}
-                </Text>
-                {alertCount > 0 ? (
-                  <View style={[styles.chip, { backgroundColor: WARNING_BG, marginLeft: s(10), paddingHorizontal: s(8), paddingVertical: s(3), borderRadius: 6 }]}>
-                    <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(12), color: WARNING }}>
-                      {alertCount} need{alertCount === 1 ? 's' : ''} attention
+              <View style={{ marginTop: s(16), backgroundColor: SURFACE, borderRadius: 14, padding: s(14) }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View>
+                    <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: MUTED }}>Today</Text>
+                    <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginTop: s(2) }}>{patients.length} {patients.length === 1 ? 'care plan' : 'care plans'}</Text>
+                  </View>
+                  <View style={[styles.chip, { backgroundColor: alertCount > 0 ? WARNING_BG : SUCCESS_BG, paddingHorizontal: s(9), paddingVertical: s(6), borderRadius: 8 }]}>
+                    <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(12), color: alertCount > 0 ? WARNING : SUCCESS }}>
+                      {alertCount > 0 ? `${alertCount} alert${alertCount > 1 ? 's' : ''}` : 'All caught up'}
                     </Text>
                   </View>
-                ) : (
-                  <View style={[styles.chip, { backgroundColor: SUCCESS_BG, marginLeft: s(10), paddingHorizontal: s(8), paddingVertical: s(3), borderRadius: 6 }]}>
-                    <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(12), color: SUCCESS }}>
-                      All caught up
-                    </Text>
-                  </View>
-                )}
+                </View>
+                <View style={{ marginTop: s(12), paddingTop: s(12), borderTopWidth: 1, borderTopColor: BORDER }}>
+                  <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: MUTED }}>
+                    {routineInProgressCount > 0 ? `${routineInProgressCount} routine${routineInProgressCount > 1 ? 's' : ''} still in progress` : 'No routines in progress'}
+                  </Text>
+                  <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(13), color: NAVY, marginTop: s(7) }}>Open a care plan for details</Text>
+                </View>
+              </View>
+            )}
+            {patients.length > 0 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: s(24), marginBottom: s(10) }}>
+                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY }}>People you care for</Text>
+                <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: MUTED }}>Daily view</Text>
               </View>
             )}
           </View>

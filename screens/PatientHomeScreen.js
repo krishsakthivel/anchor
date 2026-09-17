@@ -298,57 +298,66 @@ export default function PatientHomeScreen({ route, navigation }) {
       data={[]}
       renderItem={null}
       ListHeaderComponent={
-        <View style={{ padding: s(22) }}>
-          {/* Header: big greeting on the left, two small icon buttons on the right */}
+        <View style={{ padding: s(22), paddingBottom: s(30) }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: s(24) }}>
+            <View style={{ width: s(34), height: s(34), borderRadius: s(17), backgroundColor: NAVY, alignItems: 'center', justifyContent: 'center', marginRight: s(9) }}>
+              <Ionicons name="heart" size={s(17)} color={WHITE} />
+            </View>
+            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY }}>Anchor</Text>
+            <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: MUTED, marginLeft: s(8) }}>Today</Text>
+          </View>
+
+          {/* The patient home stays focused on today's routine. */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: s(24) }}>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(15), color: MUTED }}>Good {greeting}</Text>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(26), color: NAVY, marginTop: s(2) }}>
+              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(17), color: MUTED }}>Good {greeting}</Text>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(30), color: NAVY, marginTop: s(2) }}>
                 Hi, {patient?.name || 'there'}
               </Text>
-            </View>
-            <View style={{ flexDirection: 'row' }}>
-              <TouchableOpacity
-                onPress={() => { setVitalError(''); setVitalsVisible(true); }}
-                style={{ width: s(46), height: s(46), borderRadius: s(23), backgroundColor: SURFACE, alignItems: 'center', justifyContent: 'center' }}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="pulse-outline" size={s(22)} color={NAVY} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => navigation.navigate('PatientProfile')}
-                style={{ width: s(46), height: s(46), borderRadius: s(23), backgroundColor: SURFACE, alignItems: 'center', justifyContent: 'center', marginLeft: s(10) }}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="person-circle-outline" size={s(24)} color={NAVY} />
-              </TouchableOpacity>
             </View>
           </View>
 
           {!moodToday && (
             <TouchableOpacity
               onPress={() => { setMoodError(''); setMoodVisible(true); }}
-              style={{ backgroundColor: WARNING_BG, padding: s(16), borderRadius: 8, marginBottom: s(20), flexDirection: 'row', alignItems: 'center' }}
+              style={{ backgroundColor: WARNING_BG, padding: s(18), borderRadius: 14, marginBottom: s(24), flexDirection: 'row', alignItems: 'center', minHeight: s(82) }}
             >
               <Text style={{ fontSize: s(30), marginRight: s(14) }}>😊</Text>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>How are you feeling today?</Text>
-                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: MUTED, marginTop: s(2) }}>Tap to check in</Text>
+                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>How are you feeling?</Text>
+                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>Tap to check in for today</Text>
               </View>
             </TouchableOpacity>
           )}
 
           {moodToday && (
-            <View style={{ backgroundColor: SUCCESS_BG, padding: s(14), borderRadius: 8, marginBottom: s(20), flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ backgroundColor: SUCCESS_BG, padding: s(16), borderRadius: 14, marginBottom: s(24), flexDirection: 'row', alignItems: 'center' }}>
               <Text style={{ fontSize: s(26), marginRight: s(12) }}>{getMoodEmoji(moodToday.mood)}</Text>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: SUCCESS }}>Mood logged for today</Text>
             </View>
           )}
 
+          <View style={{ flexDirection: 'row', marginBottom: s(24) }}>
+            <TouchableOpacity
+              onPress={() => { setVitalError(''); setVitalsVisible(true); }}
+              style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 12, padding: s(14), marginRight: s(6), minHeight: s(74) }}
+            >
+              <Ionicons name="pulse-outline" size={s(22)} color={NAVY} />
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginTop: s(5) }}>Log a vital</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('PatientProfile')}
+              style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 12, padding: s(14), marginLeft: s(6), minHeight: s(74) }}
+            >
+              <Ionicons name="person-outline" size={s(22)} color={NAVY} />
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginTop: s(5) }}>My profile</Text>
+            </TouchableOpacity>
+          </View>
+
           {careNotes.length > 0 && (
-            <View style={{ marginBottom: s(22) }}>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginBottom: s(10) }}>Notes from Caregiver</Text>
-              {careNotes.map((note) => (
+            <View style={{ marginBottom: s(24) }}>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(10) }}>A note from your caregiver</Text>
+              {careNotes.slice(0, 1).map((note) => (
                 <View key={note.id} style={{ backgroundColor: note.pinned ? WARNING_BG : SURFACE, padding: s(14), borderRadius: 8, marginBottom: s(10) }}>
                   <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY }}>{note.pinned ? '📌 ' : ''}{note.title}</Text>
                   <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(15), color: NAVY, marginTop: s(4) }}>{note.body}</Text>
@@ -358,8 +367,9 @@ export default function PatientHomeScreen({ route, navigation }) {
           )}
 
           {medications.length > 0 && (
-            <View style={{ marginBottom: s(22) }}>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginBottom: s(10) }}>Medications</Text>
+            <View style={{ marginBottom: s(24) }}>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(21), color: NAVY, marginBottom: s(6) }}>Your medicines</Text>
+              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginBottom: s(12) }}>Tap one when you have taken it.</Text>
               {medications.map((med) => {
                 const taken = isMedTaken(med.id);
                 return (
@@ -377,9 +387,9 @@ export default function PatientHomeScreen({ route, navigation }) {
                       alignItems: 'center',
                       backgroundColor: taken ? SUCCESS_BG : SURFACE,
                       padding: s(16),
-                      borderRadius: 8,
+                      borderRadius: 14,
                       marginBottom: s(10),
-                      minHeight: s(64),
+                      minHeight: s(76),
                     }}
                   >
                     <Ionicons
@@ -389,8 +399,8 @@ export default function PatientHomeScreen({ route, navigation }) {
                       style={{ marginRight: s(14) }}
                     />
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>{med.name}</Text>
-                      {med.dosage && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: MUTED, marginTop: s(2) }}>{med.dosage}</Text>}
+                      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{med.name}</Text>
+                      {med.dosage && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{med.dosage}</Text>}
                     </View>
                   </TouchableOpacity>
                 );
@@ -399,8 +409,9 @@ export default function PatientHomeScreen({ route, navigation }) {
           )}
 
           {tasks.length > 0 && (
-            <View style={{ marginBottom: s(22) }}>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginBottom: s(10) }}>Tasks</Text>
+            <View style={{ marginBottom: s(24) }}>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(21), color: NAVY, marginBottom: s(6) }}>Things to do</Text>
+              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginBottom: s(12) }}>Tap one when you are finished.</Text>
               {tasks.map((task) => {
                 const done = isTaskDone(task.id);
                 return (
@@ -418,9 +429,9 @@ export default function PatientHomeScreen({ route, navigation }) {
                       alignItems: 'center',
                       backgroundColor: done ? SUCCESS_BG : SURFACE,
                       padding: s(16),
-                      borderRadius: 8,
+                      borderRadius: 14,
                       marginBottom: s(10),
-                      minHeight: s(64),
+                      minHeight: s(76),
                     }}
                   >
                     <Ionicons
@@ -430,8 +441,8 @@ export default function PatientHomeScreen({ route, navigation }) {
                       style={{ marginRight: s(14) }}
                     />
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>{task.title}</Text>
-                      {task.description && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: MUTED, marginTop: s(2) }}>{task.description}</Text>}
+                      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{task.title}</Text>
+                      {task.description && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{task.description}</Text>}
                     </View>
                   </TouchableOpacity>
                 );
@@ -445,10 +456,10 @@ export default function PatientHomeScreen({ route, navigation }) {
             </Text>
           )}
 
-          <View style={{ marginTop: s(8) }}>
+          <View style={{ marginTop: s(4), borderTopWidth: 1, borderTopColor: BORDER, paddingTop: s(20) }}>
             <TouchableOpacity
               onPress={handleCallCaregiver}
-              style={{ backgroundColor: NAVY, paddingVertical: s(18), borderRadius: 10, alignItems: 'center', marginBottom: s(14), flexDirection: 'row', justifyContent: 'center' }}
+              style={{ backgroundColor: NAVY, paddingVertical: s(19), borderRadius: 14, alignItems: 'center', marginBottom: s(12), flexDirection: 'row', justifyContent: 'center' }}
             >
               <Ionicons name="call" size={s(24)} color={WHITE} style={{ marginRight: s(10) }} />
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: WHITE }}>Call Caregiver</Text>
@@ -456,10 +467,10 @@ export default function PatientHomeScreen({ route, navigation }) {
 
             <TouchableOpacity
               onPress={handleEmergency}
-              style={{ backgroundColor: DANGER, paddingVertical: s(18), borderRadius: 10, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}
+              style={{ backgroundColor: DANGER_BG, paddingVertical: s(19), borderRadius: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}
             >
-              <Ionicons name="alert-circle" size={s(24)} color={WHITE} style={{ marginRight: s(10) }} />
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: WHITE }}>Emergency</Text>
+              <Ionicons name="alert-circle" size={s(24)} color={DANGER} style={{ marginRight: s(10) }} />
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: DANGER }}>Emergency — call 911</Text>
             </TouchableOpacity>
           </View>
         </View>
