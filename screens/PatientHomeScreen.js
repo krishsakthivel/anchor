@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, FlatList, useWindowDimensions, RefreshControl, TouchableOpacity, Alert, Linking, TextInput, Modal, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
-import { NAVY, WHITE, PLACEHOLDER, MUTED, SURFACE, BORDER, SUCCESS, SUCCESS_BG, WARNING_BG, DANGER } from '../theme/colors';
+import { NAVY, WHITE, PLACEHOLDER, MUTED, SURFACE, BORDER, SUCCESS, SUCCESS_BG, WARNING, WARNING_BG, DANGER } from '../theme/colors';
 import Button from '../components/Button';
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
@@ -207,12 +207,11 @@ export default function PatientHomeScreen({ route, navigation }) {
     setRefreshing(false);
   };
 
-  const isMedTaken = (medication) => medLogs.some((log) => (
+  const getMedStatus = (medication) => medLogs.find((log) => (
     log.medication_id === medication.id &&
-    (medication.schedule_id ? log.schedule_id === medication.schedule_id : !log.schedule_id) &&
-    log.status === 'taken'
-  ));
-  const isTaskDone = (taskId) => taskCompletions.some((c) => c.task_id === taskId && c.status === 'completed');
+    (medication.schedule_id ? log.schedule_id === medication.schedule_id : !log.schedule_id)
+  ))?.status;
+  const getTaskStatus = (taskId) => taskCompletions.find((completion) => completion.task_id === taskId)?.status;
 
   const handleLogMed = async (medication, status) => {
     if (!patient) return;
@@ -346,6 +345,61 @@ export default function PatientHomeScreen({ route, navigation }) {
   };
 
   const getMoodEmoji = (mood) => MOODS.find((m) => m.value === mood)?.emoji || '😐';
+  const routineItems = [
+    ...medications.map((medication) => {
+      const status = getMedStatus(medication);
+      return {
+        key: `med-${medication.slotKey || medication.id}`,
+        kind: 'medicine',
+        title: medication.name,
+        detail: [medication.dosage, medication.instructions].filter(Boolean).join(' · '),
+        time: medication.schedule_time,
+        status,
+        handled: !!status,
+        complete: status === 'taken',
+        medication,
+      };
+    }),
+    ...tasks.map((task) => {
+      const status = getTaskStatus(task.id);
+      return {
+        key: `task-${task.id}`,
+        kind: 'task',
+        title: task.title,
+        detail: task.description || '',
+        time: task.time,
+        status,
+        handled: !!status,
+        complete: status === 'completed',
+        task,
+      };
+    }),
+  ].sort((a, b) => {
+    if (!a.time && !b.time) return a.title.localeCompare(b.title);
+    if (!a.time) return 1;
+    if (!b.time) return -1;
+    return String(a.time).localeCompare(String(b.time));
+  });
+  const handledRoutineCount = routineItems.filter((item) => item.handled).length;
+  const nextRoutineItem = routineItems.find((item) => !item.handled);
+
+  const openRoutineItem = (item) => {
+    if (item.handled) return;
+    if (item.kind === 'medicine') {
+      Alert.alert('Mark Medication', `How did ${item.title} go?`, [
+        { text: 'Taken', onPress: () => handleLogMed(item.medication, 'taken') },
+        { text: 'Skipped', onPress: () => handleLogMed(item.medication, 'skipped') },
+        { text: 'Missed', onPress: () => handleLogMed(item.medication, 'missed') },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+      return;
+    }
+    Alert.alert('Complete Task', `Mark "${item.title}" as:`, [
+      { text: 'Done', onPress: () => handleCompleteTask(item.task.id, 'completed') },
+      { text: 'Skipped', onPress: () => handleCompleteTask(item.task.id, 'skipped') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
 
   if (loadingInitial) {
     return (
@@ -399,43 +453,6 @@ export default function PatientHomeScreen({ route, navigation }) {
             </View>
           </View>
 
-          {!moodToday && (
-            <TouchableOpacity
-              onPress={() => { setMoodError(''); setMoodVisible(true); }}
-              style={{ backgroundColor: WARNING_BG, padding: s(18), borderRadius: 14, marginBottom: s(24), flexDirection: 'row', alignItems: 'center', minHeight: s(82) }}
-            >
-              <Text style={{ fontSize: s(30), marginRight: s(14) }}>😊</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>How are you feeling?</Text>
-                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>Tap to check in for today</Text>
-              </View>
-            </TouchableOpacity>
-          )}
-
-          {moodToday && (
-            <View style={{ backgroundColor: SUCCESS_BG, padding: s(16), borderRadius: 14, marginBottom: s(24), flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={{ fontSize: s(26), marginRight: s(12) }}>{getMoodEmoji(moodToday.mood)}</Text>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: SUCCESS }}>Mood logged for today</Text>
-            </View>
-          )}
-
-          <View style={{ flexDirection: 'row', marginBottom: s(24) }}>
-            <TouchableOpacity
-              onPress={() => { setVitalError(''); setVitalsVisible(true); }}
-              style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 12, padding: s(14), marginRight: s(6), minHeight: s(74) }}
-            >
-              <Ionicons name="pulse-outline" size={s(22)} color={NAVY} />
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginTop: s(5) }}>Log a vital</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => navigation.navigate('PatientProfile')}
-              style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 12, padding: s(14), marginLeft: s(6), minHeight: s(74) }}
-            >
-              <Ionicons name="person-outline" size={s(22)} color={NAVY} />
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginTop: s(5) }}>My profile</Text>
-            </TouchableOpacity>
-          </View>
-
           {careNotes.length > 0 && (
             <View style={{ marginBottom: s(24) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(10) }}>A note from your caregiver</Text>
@@ -448,99 +465,103 @@ export default function PatientHomeScreen({ route, navigation }) {
             </View>
           )}
 
-          {medications.length > 0 && (
+          {routineItems.length > 0 && (
             <View style={{ marginBottom: s(24) }}>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(21), color: NAVY, marginBottom: s(6) }}>Your medicines</Text>
-              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginBottom: s(12) }}>Tap one when you have taken it.</Text>
-              {medications.map((med) => {
-                const taken = isMedTaken(med.id);
-                return (
-                  <TouchableOpacity
-                      key={med.slotKey || med.id}
-                      disabled={taken || medLogs.some((log) => log.medication_id === med.id && (med.schedule_id ? log.schedule_id === med.schedule_id : !log.schedule_id))}
-                      activeOpacity={0.7}
-                      onPress={() => Alert.alert('Mark Medication', `How did ${med.name} go?`, [
-                        { text: 'Taken', onPress: () => handleLogMed(med, 'taken') },
-                        { text: 'Skipped', onPress: () => handleLogMed(med, 'skipped') },
-                        { text: 'Missed', onPress: () => handleLogMed(med, 'missed') },
-                      { text: 'Cancel', style: 'cancel' },
-                    ])}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: taken ? SUCCESS_BG : SURFACE,
-                      padding: s(16),
-                      borderRadius: 14,
-                      marginBottom: s(10),
-                      minHeight: s(76),
-                    }}
-                  >
-                    <Ionicons
-                      name={taken ? 'checkmark-circle' : 'ellipse-outline'}
-                      size={s(26)}
-                      color={taken ? SUCCESS : NAVY}
-                      style={{ marginRight: s(14) }}
-                    />
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{med.name}</Text>
-                        {med.dosage && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{med.dosage}</Text>}
-                        {med.schedule_time && <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginTop: s(3) }}>{formatScheduleTime(med.schedule_time)}</Text>}
-                        {med.instructions && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: MUTED, marginTop: s(3) }}>{med.instructions}</Text>}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
+              <View style={{ backgroundColor: nextRoutineItem ? WARNING_BG : SUCCESS_BG, padding: s(18), borderRadius: 14, marginBottom: s(18) }}>
+                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(13), color: MUTED, marginBottom: s(5), textTransform: 'uppercase', letterSpacing: 0.7 }}>
+                  {nextRoutineItem ? 'Up next' : 'Today'}
+                </Text>
+                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(21), color: NAVY }}>
+                  {nextRoutineItem ? nextRoutineItem.title : 'You are all done for now'}
+                </Text>
+                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(4) }}>
+                  {nextRoutineItem
+                    ? [nextRoutineItem.detail, formatScheduleTime(nextRoutineItem.time)].filter(Boolean).join(' · ')
+                    : 'Your caregiver can see that today’s routine is complete.'}
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(7) }}>
+                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY }}>Today’s plan</Text>
+                <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: MUTED }}>{handledRoutineCount} of {routineItems.length} checked</Text>
+              </View>
+              <View style={{ height: s(8), backgroundColor: BORDER, borderRadius: s(4), overflow: 'hidden', marginBottom: s(14) }}>
+                <View style={{ height: '100%', width: `${(handledRoutineCount / routineItems.length) * 100}%`, backgroundColor: SUCCESS, borderRadius: s(4) }} />
+              </View>
+
+              {routineItems.map((item) => (
+                <TouchableOpacity
+                  key={item.key}
+                  disabled={item.handled}
+                  activeOpacity={0.7}
+                  onPress={() => openRoutineItem(item)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.title}${item.time ? ` at ${formatScheduleTime(item.time)}` : ''}${item.handled ? `, ${item.status}` : ''}`}
+                  accessibilityState={{ disabled: item.handled }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: item.complete ? SUCCESS_BG : item.handled ? WARNING_BG : SURFACE,
+                    padding: s(16),
+                    borderRadius: 14,
+                    marginBottom: s(10),
+                    minHeight: s(82),
+                  }}
+                >
+                  <View style={{ width: s(54), marginRight: s(8) }}>
+                    <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>
+                      {formatScheduleTime(item.time) || 'Today'}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{item.title}</Text>
+                    {!!item.detail && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{item.detail}</Text>}
+                    <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: item.complete ? SUCCESS : item.handled ? WARNING : MUTED, marginTop: s(3) }}>
+                      {item.complete ? 'Completed' : item.handled ? (item.status === 'missed' ? 'Missed' : 'Skipped') : item.kind === 'medicine' ? 'Medicine' : 'To do'}
+                    </Text>
+                  </View>
+                  <Ionicons name={item.complete ? 'checkmark-circle' : item.handled ? 'remove-circle' : 'ellipse-outline'} size={s(30)} color={item.complete ? SUCCESS : item.handled ? WARNING : NAVY} style={{ marginLeft: s(10) }} />
+                </TouchableOpacity>
+              ))}
             </View>
           )}
 
-          {tasks.length > 0 && (
-            <View style={{ marginBottom: s(24) }}>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(21), color: NAVY, marginBottom: s(6) }}>Things to do</Text>
-              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginBottom: s(12) }}>Tap one when you are finished.</Text>
-              {tasks.map((task) => {
-                const done = isTaskDone(task.id);
-                return (
-                  <TouchableOpacity
-                    key={task.id}
-                    disabled={done || taskCompletions.some((completion) => completion.task_id === task.id)}
-                    activeOpacity={0.7}
-                    onPress={() => Alert.alert('Complete Task', `Mark "${task.title}" as:`, [
-                      { text: 'Done', onPress: () => handleCompleteTask(task.id, 'completed') },
-                      { text: 'Skipped', onPress: () => handleCompleteTask(task.id, 'skipped') },
-                      { text: 'Cancel', style: 'cancel' },
-                    ])}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: done ? SUCCESS_BG : SURFACE,
-                      padding: s(16),
-                      borderRadius: 14,
-                      marginBottom: s(10),
-                      minHeight: s(76),
-                    }}
-                  >
-                    <Ionicons
-                      name={done ? 'checkmark-circle' : 'ellipse-outline'}
-                      size={s(26)}
-                      color={done ? SUCCESS : NAVY}
-                      style={{ marginRight: s(14) }}
-                    />
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{task.title}</Text>
-                        {task.description && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{task.description}</Text>}
-                        {task.time && <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginTop: s(3) }}>{formatScheduleTime(task.time)}</Text>}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
+          {routineItems.length === 0 && (
+            <View style={{ backgroundColor: SUCCESS_BG, padding: s(18), borderRadius: 14, marginBottom: s(24) }}>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: SUCCESS }}>Nothing scheduled for today</Text>
+              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(4) }}>You are all caught up.</Text>
             </View>
           )}
 
-          {medications.length === 0 && tasks.length === 0 && (
-            <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginBottom: s(22) }}>
-              Nothing scheduled for today.
-            </Text>
+          {!moodToday ? (
+            <TouchableOpacity
+              onPress={() => { setMoodError(''); setMoodVisible(true); }}
+              style={{ backgroundColor: WARNING_BG, padding: s(18), borderRadius: 14, marginBottom: s(18), flexDirection: 'row', alignItems: 'center', minHeight: s(82) }}
+            >
+              <Text style={{ fontSize: s(30), marginRight: s(14) }}>😊</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>How are you feeling?</Text>
+                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>Tap to check in for today</Text>
+              </View>
+            </TouchableOpacity>
+          ) : (
+            <View style={{ backgroundColor: SUCCESS_BG, padding: s(16), borderRadius: 14, marginBottom: s(18), flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ fontSize: s(26), marginRight: s(12) }}>{getMoodEmoji(moodToday.mood)}</Text>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: SUCCESS }}>Mood logged for today</Text>
+            </View>
           )}
+
+          <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginBottom: s(10) }}>More</Text>
+          <View style={{ flexDirection: 'row', marginBottom: s(24) }}>
+            <TouchableOpacity onPress={() => { setVitalError(''); setVitalsVisible(true); }} style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 12, padding: s(14), marginRight: s(6), minHeight: s(76) }}>
+              <Ionicons name="pulse-outline" size={s(22)} color={NAVY} />
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginTop: s(5) }}>Log a vital</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => navigation.navigate('PatientProfile')} style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 12, padding: s(14), marginLeft: s(6), minHeight: s(76) }}>
+              <Ionicons name="person-outline" size={s(22)} color={NAVY} />
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginTop: s(5) }}>My profile</Text>
+            </TouchableOpacity>
+          </View>
 
           <View style={{ marginTop: s(4), borderTopWidth: 1, borderTopColor: BORDER, paddingTop: s(20) }}>
             <TouchableOpacity

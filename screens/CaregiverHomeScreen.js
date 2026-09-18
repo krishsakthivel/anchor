@@ -447,7 +447,7 @@ export default function CaregiverHomeScreen({ navigation }) {
 
           <View style={{ alignItems: 'flex-end', marginLeft: s(6) }}>
             <Ionicons name={item.moodToday ? 'chatbubble-ellipses-outline' : 'remove-circle-outline'} size={s(20)} color={item.moodToday ? SUCCESS : PLACEHOLDER} />
-            <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(10), color: item.moodToday ? SUCCESS : MUTED, marginTop: s(2) }}>
+            <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: item.moodToday ? SUCCESS : MUTED, marginTop: s(2) }}>
               {item.moodToday ? 'Mood logged' : 'No check-in'}
             </Text>
           </View>
@@ -600,16 +600,6 @@ export default function CaregiverHomeScreen({ navigation }) {
         }
       />
 
-      <TouchableOpacity
-        onPress={() => setAddModalVisible(true)}
-        accessibilityRole="button"
-        accessibilityLabel="Add patient"
-        style={[styles.fab, { width: s(58), height: s(58), borderRadius: s(29), bottom: s(24), right: s(20) }]}
-        activeOpacity={0.85}
-      >
-        <Ionicons name="add" size={s(28)} color={WHITE} />
-      </TouchableOpacity>
-
       {/* Add patient modal */}
       <Modal visible={addModalVisible} animationType="slide" transparent>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -726,17 +716,6 @@ const styles = StyleSheet.create({
   chip: {
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  fab: {
-    position: 'absolute',
-    backgroundColor: NAVY,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 6,
   },
   modalOverlay: {
     flex: 1,
