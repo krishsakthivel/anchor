@@ -2,16 +2,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, FlatList, useWindowDimensions, RefreshControl, TouchableOpacity, Alert, Linking, TextInput, Modal, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+const { getRoutineStatus } = require('../lib/routineStatus');
 import { NAVY, WHITE, PLACEHOLDER, MUTED, SURFACE, BORDER, SUCCESS, SUCCESS_BG, WARNING, WARNING_BG, DANGER } from '../theme/colors';
 import Button from '../components/Button';
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const MOODS = [
-  { value: 1, emoji: '🤒' },
-  { value: 2, emoji: '😢' },
-  { value: 3, emoji: '😟' },
-  { value: 4, emoji: '😐' },
-  { value: 5, emoji: '😊' },
+  { value: 1, emoji: '🤒', label: 'Very unwell' },
+  { value: 2, emoji: '😢', label: 'Sad' },
+  { value: 3, emoji: '😟', label: 'Not great' },
+  { value: 4, emoji: '😐', label: 'Okay' },
+  { value: 5, emoji: '😊', label: 'Good' },
 ];
 const VITAL_UNITS = {
   blood_pressure: 'mmHg',
@@ -223,18 +224,34 @@ export default function PatientHomeScreen({ route, navigation }) {
     if (alreadyLogged || pendingMedLogs.current.has(logKey)) return;
     pendingMedLogs.current.add(logKey);
     try {
-      const { error } = await supabase.from('medication_log').insert({
-        medication_id: medication.id,
-        patient_id: patient.id,
-        schedule_id: medication.schedule_id || null,
-        status,
-      });
+      const { data: savedLog, error } = await supabase
+        .from('medication_log')
+        .insert({
+          medication_id: medication.id,
+          patient_id: patient.id,
+          schedule_id: medication.schedule_id || null,
+          status,
+        })
+        .select('id')
+        .single();
       if (error) {
         console.error('medication_log insert failed', error);
         Alert.alert('Could not save', error.message || 'Please try again.');
         return;
       }
       await fetchData();
+      Alert.alert('Medication updated', `${medication.name} was marked ${status}.`, [
+        {
+          text: 'Undo',
+          style: 'destructive',
+          onPress: async () => {
+            const { error: undoError } = await supabase.from('medication_log').delete().eq('id', savedLog.id);
+            if (undoError) Alert.alert('Could not undo', 'Please try again.');
+            await fetchData();
+          },
+        },
+        { text: 'Done' },
+      ]);
     } catch (err) {
       console.error('handleLogMed failed', err);
       Alert.alert('Could not save', 'Something went wrong. Please try again.');
@@ -247,13 +264,30 @@ export default function PatientHomeScreen({ route, navigation }) {
     if (!patient || taskCompletions.some((completion) => completion.task_id === taskId) || pendingTaskCompletions.current.has(taskId)) return;
     pendingTaskCompletions.current.add(taskId);
     try {
-      const { error } = await supabase.from('task_completion').insert({ task_id: taskId, patient_id: patient.id, status });
+      const { data: savedCompletion, error } = await supabase
+        .from('task_completion')
+        .insert({ task_id: taskId, patient_id: patient.id, status })
+        .select('id')
+        .single();
       if (error) {
         console.error('task_completion insert failed', error);
         Alert.alert('Could not save', error.message || 'Please try again.');
         return;
       }
       await fetchData();
+      const taskName = tasks.find((task) => task.id === taskId)?.title || 'Task';
+      Alert.alert('Task updated', `${taskName} was marked ${status === 'completed' ? 'done' : status}.`, [
+        {
+          text: 'Undo',
+          style: 'destructive',
+          onPress: async () => {
+            const { error: undoError } = await supabase.from('task_completion').delete().eq('id', savedCompletion.id);
+            if (undoError) Alert.alert('Could not undo', 'Please try again.');
+            await fetchData();
+          },
+        },
+        { text: 'Done' },
+      ]);
     } catch (err) {
       console.error('handleCompleteTask failed', err);
       Alert.alert('Could not save', 'Something went wrong. Please try again.');
@@ -348,6 +382,7 @@ export default function PatientHomeScreen({ route, navigation }) {
   const routineItems = [
     ...medications.map((medication) => {
       const status = getMedStatus(medication);
+      const routineStatus = getRoutineStatus('medicine', status);
       return {
         key: `med-${medication.slotKey || medication.id}`,
         kind: 'medicine',
@@ -355,13 +390,13 @@ export default function PatientHomeScreen({ route, navigation }) {
         detail: [medication.dosage, medication.instructions].filter(Boolean).join(' · '),
         time: medication.schedule_time,
         status,
-        handled: !!status,
-        complete: status === 'taken',
+        ...routineStatus,
         medication,
       };
     }),
     ...tasks.map((task) => {
       const status = getTaskStatus(task.id);
+      const routineStatus = getRoutineStatus('task', status);
       return {
         key: `task-${task.id}`,
         kind: 'task',
@@ -369,8 +404,7 @@ export default function PatientHomeScreen({ route, navigation }) {
         detail: task.description || '',
         time: task.time,
         status,
-        handled: !!status,
-        complete: status === 'completed',
+        ...routineStatus,
         task,
       };
     }),
@@ -430,10 +464,12 @@ export default function PatientHomeScreen({ route, navigation }) {
   }
 
   return (
-    <FlatList
-      data={[]}
-      renderItem={null}
-      ListHeaderComponent={
+    <View style={{ flex: 1, backgroundColor: WHITE }}>
+      <FlatList
+        data={[]}
+        renderItem={null}
+        contentContainerStyle={{ paddingBottom: s(96) }}
+        ListHeaderComponent={
         <View style={{ padding: s(22), paddingBottom: s(30) }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: s(24) }}>
             <View style={{ width: s(34), height: s(34), borderRadius: s(17), backgroundColor: NAVY, alignItems: 'center', justifyContent: 'center', marginRight: s(9) }}>
@@ -517,7 +553,7 @@ export default function PatientHomeScreen({ route, navigation }) {
                     <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{item.title}</Text>
                     {!!item.detail && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{item.detail}</Text>}
                     <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: item.complete ? SUCCESS : item.handled ? WARNING : MUTED, marginTop: s(3) }}>
-                      {item.complete ? 'Completed' : item.handled ? (item.status === 'missed' ? 'Missed' : 'Skipped') : item.kind === 'medicine' ? 'Medicine' : 'To do'}
+                      {item.label}
                     </Text>
                   </View>
                   <Ionicons name={item.complete ? 'checkmark-circle' : item.handled ? 'remove-circle' : 'ellipse-outline'} size={s(30)} color={item.complete ? SUCCESS : item.handled ? WARNING : NAVY} style={{ marginLeft: s(10) }} />
@@ -565,14 +601,6 @@ export default function PatientHomeScreen({ route, navigation }) {
 
           <View style={{ marginTop: s(4), borderTopWidth: 1, borderTopColor: BORDER, paddingTop: s(20) }}>
             <TouchableOpacity
-              onPress={handleCallCaregiver}
-              style={{ backgroundColor: NAVY, paddingVertical: s(19), borderRadius: 14, alignItems: 'center', marginBottom: s(12), flexDirection: 'row', justifyContent: 'center' }}
-            >
-              <Ionicons name="call" size={s(24)} color={WHITE} style={{ marginRight: s(10) }} />
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: WHITE }}>Call Caregiver</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
               onPress={handleEmergency}
               style={{ backgroundColor: DANGER_BG, paddingVertical: s(19), borderRadius: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}
             >
@@ -582,8 +610,8 @@ export default function PatientHomeScreen({ route, navigation }) {
           </View>
         </View>
       }
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={NAVY} />}
-      ListFooterComponent={
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={NAVY} />}
+        ListFooterComponent={
         <>
           <Modal visible={moodVisible} animationType="slide" transparent>
             <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -600,6 +628,9 @@ export default function PatientHomeScreen({ route, navigation }) {
                     <TouchableOpacity
                       key={m.value}
                       onPress={() => setSelectedMood(m.value)}
+                      accessibilityRole="button"
+                      accessibilityLabel={m.label}
+                      accessibilityState={{ selected: selectedMood === m.value }}
                       style={{
                         flex: 1,
                         alignItems: 'center',
@@ -636,8 +667,8 @@ export default function PatientHomeScreen({ route, navigation }) {
                 )}
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: s(12) }}>
                   {[{ key: 'blood_pressure', label: 'Blood Pressure' }, { key: 'blood_sugar', label: 'Blood Sugar' }, { key: 'weight', label: 'Weight' }, { key: 'temperature', label: 'Temperature' }, { key: 'heart_rate', label: 'Heart Rate' }, { key: 'oxygen', label: 'Oxygen' }].map((t) => (
-                    <TouchableOpacity key={t.key} onPress={() => setVitalType(t.key)} style={{ backgroundColor: vitalType === t.key ? NAVY : SURFACE, paddingHorizontal: s(10), paddingVertical: s(6), borderRadius: 6, marginRight: s(6), marginBottom: s(6) }}>
-                      <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(12), color: vitalType === t.key ? WHITE : NAVY }}>{t.label}</Text>
+                    <TouchableOpacity key={t.key} onPress={() => setVitalType(t.key)} accessibilityRole="button" accessibilityLabel={`Log ${t.label}`} accessibilityState={{ selected: vitalType === t.key }} style={{ backgroundColor: vitalType === t.key ? NAVY : SURFACE, paddingHorizontal: s(12), paddingVertical: s(9), borderRadius: 6, marginRight: s(6), marginBottom: s(6), minHeight: s(44), justifyContent: 'center' }}>
+                      <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: vitalType === t.key ? WHITE : NAVY }}>{t.label}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -653,7 +684,19 @@ export default function PatientHomeScreen({ route, navigation }) {
             </KeyboardAvoidingView>
           </Modal>
         </>
-      }
-    />
+        }
+      />
+      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: s(22), paddingTop: s(10), paddingBottom: s(14), backgroundColor: WHITE, borderTopWidth: 1, borderTopColor: BORDER }}>
+        <TouchableOpacity
+          onPress={handleCallCaregiver}
+          accessibilityRole="button"
+          accessibilityLabel="Call caregiver"
+          style={{ backgroundColor: NAVY, minHeight: s(58), borderRadius: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}
+        >
+          <Ionicons name="call" size={s(24)} color={WHITE} style={{ marginRight: s(10) }} />
+          <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: WHITE }}>Call Caregiver</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }

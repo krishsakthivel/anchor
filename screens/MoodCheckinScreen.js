@@ -129,6 +129,9 @@ export default function MoodCheckinScreen({ route }) {
                 <TouchableOpacity
                   key={m.value}
                   onPress={() => setSelectedMood(m.value)}
+                  accessibilityRole="button"
+                  accessibilityLabel={m.label}
+                  accessibilityState={{ selected: selectedMood === m.value }}
                   style={{
                     alignItems: 'center',
                     padding: s(10),
@@ -139,7 +142,7 @@ export default function MoodCheckinScreen({ route }) {
                   }}
                 >
                   <Text style={{ fontSize: s(32) }}>{m.emoji}</Text>
-                  <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(10), color: '#666', marginTop: s(4) }}>{m.label}</Text>
+                  <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666', marginTop: s(4) }}>{m.label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -173,11 +176,11 @@ export default function MoodCheckinScreen({ route }) {
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(20) }}>
           {last7Days.map((day, i) => (
             <View key={i} style={{ alignItems: 'center', flex: 1 }}>
-              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(11), color: '#666' }}>{day.day}</Text>
+              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{day.day}</Text>
               <Text style={{ fontSize: s(24), marginTop: s(4) }}>
                 {day.avg ? getMoodEmoji(Math.round(day.avg)) : '—'}
               </Text>
-              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(10), color: '#999' }}>{day.date}</Text>
+              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{day.date}</Text>
             </View>
           ))}
         </View>
@@ -197,7 +200,7 @@ export default function MoodCheckinScreen({ route }) {
                   <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{log.note}</Text>
                 )}
               </View>
-              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(11), color: '#999' }}>
+              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666' }}>
                 {new Date(log.logged_at).toLocaleDateString()}
               </Text>
             </View>
