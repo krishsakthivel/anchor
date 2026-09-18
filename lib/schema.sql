@@ -393,6 +393,14 @@ CREATE POLICY "Patients read own medication logs"
     )
   );
 
+CREATE POLICY "Patients undo own medication logs"
+  ON medication_log FOR DELETE
+  USING (
+    patient_id IN (
+      SELECT id FROM patients WHERE paired_user_id = auth.uid()
+    )
+  );
+
 CREATE POLICY "Caregivers manage accessible tasks"
   ON tasks FOR ALL
   USING (has_patient_access(patient_id, 'editor'))
@@ -423,6 +431,14 @@ CREATE POLICY "Caregivers read patient task completions"
 
 CREATE POLICY "Patients read own task completions"
   ON task_completion FOR SELECT
+  USING (
+    patient_id IN (
+      SELECT id FROM patients WHERE paired_user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Patients undo own task completions"
+  ON task_completion FOR DELETE
   USING (
     patient_id IN (
       SELECT id FROM patients WHERE paired_user_id = auth.uid()

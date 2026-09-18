@@ -147,8 +147,8 @@ export default function CareNotesScreen({ route }) {
                     {note.pinned ? '📌 ' : ''}{note.title}
                   </Text>
                   {!isPatient && (
-                    <TouchableOpacity onPress={() => handleTogglePin(note)}>
-                      <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#999' }}>
+                    <TouchableOpacity onPress={() => handleTogglePin(note)} accessibilityRole="button" accessibilityLabel={`${note.pinned ? 'Unpin' : 'Pin'} ${note.title}`} style={{ minHeight: s(44), justifyContent: 'center', paddingHorizontal: s(6) }}>
+                      <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: '#666' }}>
                         {note.pinned ? 'Unpin' : 'Pin'}
                       </Text>
                     </TouchableOpacity>
@@ -157,7 +157,7 @@ export default function CareNotesScreen({ route }) {
                 <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#333', marginTop: s(4) }}>
                   {note.body}
                 </Text>
-                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(11), color: '#999', marginTop: s(6) }}>
+                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666', marginTop: s(6) }}>
                   {new Date(note.created_at).toLocaleDateString()}
                 </Text>
               </TouchableOpacity>

@@ -138,8 +138,8 @@ export default function VitalsScreen({ route }) {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: s(16) }}>
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY }}>Vitals</Text>
             {isPatient && (
-              <TouchableOpacity onPress={() => setAddVisible(true)}>
-                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>+ Log</Text>
+              <TouchableOpacity onPress={() => setAddVisible(true)} accessibilityRole="button" accessibilityLabel="Log a vital sign" style={{ minHeight: s(44), justifyContent: 'center', paddingHorizontal: s(6) }}>
+                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY }}>+ Log</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -157,7 +157,7 @@ export default function VitalsScreen({ route }) {
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}>{getTypeLabel(v.type)}</Text>
                   <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY }}>{v.value} {v.unit}</Text>
                 </View>
-                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(11), color: '#999' }}>
+                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666' }}>
                   {new Date(v.logged_at).toLocaleDateString()}
                 </Text>
               </View>
@@ -174,7 +174,7 @@ export default function VitalsScreen({ route }) {
                     <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: NAVY }}>{getTypeLabel(v.type)}</Text>
                   </View>
                   <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>{v.value} {v.unit}</Text>
-                  <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(11), color: '#999', marginLeft: s(8) }}>
+                  <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666', marginLeft: s(8) }}>
                     {new Date(v.logged_at).toLocaleDateString()}
                   </Text>
                 </View>
@@ -197,18 +197,23 @@ export default function VitalsScreen({ route }) {
                   <TouchableOpacity
                     key={type.key}
                     onPress={() => setSelectedType(type)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Select ${type.label}`}
+                    accessibilityState={{ selected: selectedType?.key === type.key }}
                     style={{
                       backgroundColor: selectedType?.key === type.key ? NAVY : '#F0F4FF',
                       paddingHorizontal: s(12),
-                      paddingVertical: s(8),
+                      paddingVertical: s(10),
                       borderRadius: 6,
                       marginRight: s(6),
                       marginBottom: s(6),
+                      minHeight: s(44),
+                      justifyContent: 'center',
                     }}
                   >
                     <Text style={{
                       fontFamily: 'DMSans_500Medium',
-                      fontSize: s(12),
+                      fontSize: s(14),
                       color: selectedType?.key === type.key ? WHITE : NAVY,
                     }}>
                       {type.label}

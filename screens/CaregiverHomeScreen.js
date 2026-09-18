@@ -485,7 +485,7 @@ export default function CaregiverHomeScreen({ navigation }) {
 
         {item.lowStockCount > 0 && (
           <View style={[styles.chip, { backgroundColor: DANGER_BG, marginTop: s(10), alignSelf: 'flex-start', paddingHorizontal: s(8), paddingVertical: s(4), borderRadius: 6 }]}>
-            <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(11), color: DANGER }}>
+            <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: DANGER }}>
               ⚠ {item.lowStockCount} medication{item.lowStockCount > 1 ? 's' : ''} running low
             </Text>
           </View>
