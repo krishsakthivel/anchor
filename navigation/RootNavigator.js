@@ -9,6 +9,7 @@ import LandingScreen from '../screens/LandingScreen';
 import CaregiverLoginScreen from '../screens/CaregiverLoginScreen';
 import CaregiverRegisterScreen from '../screens/CaregiverRegisterScreen';
 import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
+import ResetPasswordScreen from '../screens/ResetPasswordScreen';
 import PatientHomeScreen from '../screens/PatientHomeScreen';
 import CaregiverHomeScreen from '../screens/CaregiverHomeScreen';
 import PatientDetailScreen from '../screens/PatientDetailScreen';
@@ -22,6 +23,14 @@ import WeeklyReportScreen from '../screens/WeeklyReportScreen';
 import { supabase } from '../lib/supabase';
 
 const Stack = createNativeStackNavigator();
+const linking = {
+  prefixes: ['anchor://', '/', 'http://localhost:8081'],
+  config: {
+    screens: {
+      ResetPassword: 'reset-password',
+    },
+  },
+};
 
 export default function RootNavigator() {
   const [initialRoute, setInitialRoute] = React.useState(null);
@@ -39,6 +48,7 @@ export default function RootNavigator() {
   React.useEffect(() => {
     const resolveRoute = async (session) => {
       let route;
+      setInitialPatientId(null);
       if (!session) {
         route = 'Landing';
       } else if (session.user?.is_anonymous) {
@@ -48,13 +58,13 @@ export default function RootNavigator() {
           .from('patients')
           .select('id')
           .eq('paired_user_id', session.user.id)
-          .single();
+          .maybeSingle();
 
         if (patientRow) {
           setInitialPatientId(patientRow.id);
           route = 'PatientHome';
         } else {
-          route = 'CaregiverHome';
+          route = 'Landing';
         }
       } else {
         const { data: profile } = await supabase
@@ -105,12 +115,13 @@ export default function RootNavigator() {
   return (
     <SafeAreaProvider>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right', 'bottom']}>
-        <NavigationContainer>
-          <Stack.Navigator initialRouteName={initialRoute} screenOptions={{ headerShown: false }}>
+        <NavigationContainer linking={linking}>
+          <Stack.Navigator key={initialRoute} initialRouteName={initialRoute} screenOptions={{ headerShown: false }}>
             <Stack.Screen name="Landing" component={LandingScreen} />
             <Stack.Screen name="CaregiverLogin" component={CaregiverLoginScreen} />
             <Stack.Screen name="CaregiverRegister" component={CaregiverRegisterScreen} />
             <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+            <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
             <Stack.Screen
               name="PatientHome"
               component={PatientHomeScreen}

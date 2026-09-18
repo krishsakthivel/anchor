@@ -67,7 +67,6 @@ export default function ProfileScreen({ navigation }) {
         id: user.id,
         full_name: fullName.trim(),
         phone: phone.trim(),
-        role: 'caregiver',
       });
 
     if (error) {
@@ -76,14 +75,15 @@ export default function ProfileScreen({ navigation }) {
       return;
     }
 
-    if (caregiverPhone.trim()) {
-      const { error: cpError } = await supabase
-        .from('caregiver_phone')
-        .upsert({
-          user_id: user.id,
-          phone: caregiverPhone.trim(),
-        });
-      if (cpError) console.error('caregiver_phone upsert failed', cpError);
+    const contactRequest = caregiverPhone.trim()
+      ? supabase.from('caregiver_phone').upsert({ user_id: user.id, phone: caregiverPhone.trim() })
+      : supabase.from('caregiver_phone').delete().eq('user_id', user.id);
+    const { error: cpError } = await contactRequest;
+    if (cpError) {
+      console.error('caregiver_phone save failed', cpError);
+      setLoading(false);
+      Alert.alert('Error', 'Failed to save the phone number.');
+      return;
     }
 
     setLoading(false);

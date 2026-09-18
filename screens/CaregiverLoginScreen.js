@@ -43,10 +43,18 @@ export default function CaregiverLoginScreen({ navigation }) {
 
     setLoading(true);
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+    let signInError;
+    try {
+      ({ error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      }));
+    } catch (err) {
+      console.error('signInWithPassword failed', err);
+      setLoading(false);
+      setError('Could not connect. Please try again.');
+      return;
+    }
 
     setLoading(false);
 

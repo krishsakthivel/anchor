@@ -16,6 +16,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Crypto from 'expo-crypto';
 import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
 import {
@@ -38,11 +39,8 @@ import {
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 const generateCode = () => {
-  let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += Math.floor(Math.random() * 10);
-  }
-  return code;
+  const values = Crypto.getRandomValues(new Uint32Array(8));
+  return Array.from(values, (value) => String(value % 10)).join('');
 };
 
 const getInitials = (name) => {
@@ -68,9 +66,9 @@ async function getPatientSummaries(patientIds) {
 
   const [medsRes, schedRes, tasksRes, medLogRes, taskCompRes, moodRes] = await Promise.all([
     supabase.from('medications').select('id, patient_id, total_pills, pills_remaining, refill_alert_at').in('patient_id', patientIds),
-    supabase.from('medication_schedule').select('medication_id, patient_id, days').in('patient_id', patientIds).eq('active', true),
+    supabase.from('medication_schedule').select('id, medication_id, patient_id, days').in('patient_id', patientIds).eq('active', true),
     supabase.from('tasks').select('id, patient_id, days').in('patient_id', patientIds).eq('active', true),
-    supabase.from('medication_log').select('medication_id, patient_id, status').in('patient_id', patientIds).gte('logged_at', todayStartIso),
+    supabase.from('medication_log').select('medication_id, schedule_id, patient_id, status').in('patient_id', patientIds).gte('logged_at', todayStartIso),
     supabase.from('task_completion').select('task_id, patient_id, status').in('patient_id', patientIds).gte('completed_at', todayStartIso),
     supabase.from('mood_logs').select('patient_id, mood, logged_at').in('patient_id', patientIds).gte('logged_at', todayStartIso).order('logged_at', { ascending: false }),
   ]);
@@ -91,13 +89,18 @@ async function getPatientSummaries(patientIds) {
     const patientTaskComps = taskComps.filter((c) => c.patient_id === patientId);
     const patientMeds = meds.filter((m) => m.patient_id === patientId);
 
-    const scheduledMedIds = new Set(patientSchedules.map((sc) => sc.medication_id));
-    const todayMedIds = new Set(
-      patientSchedules.filter((sc) => (sc.days || '').includes(today)).map((sc) => sc.medication_id)
-    );
-    // Meds with no schedule row are due every day (mirrors patient home).
+    const todayMedSlots = [];
     for (const med of patientMeds) {
-      if (!scheduledMedIds.has(med.id)) todayMedIds.add(med.id);
+      const medSchedules = patientSchedules.filter((schedule) => schedule.medication_id === med.id);
+      const dueSchedules = medSchedules.filter((schedule) => {
+        const days = Array.isArray(schedule.days) ? schedule.days : String(schedule.days || '');
+        return days.includes(today);
+      });
+      if (!medSchedules.length) {
+        todayMedSlots.push({ medicationId: med.id, scheduleId: null });
+      } else {
+        dueSchedules.forEach((schedule) => todayMedSlots.push({ medicationId: med.id, scheduleId: schedule.id }));
+      }
     }
     const todayTaskIds = new Set(
       patientTasks.filter((t) => !t.days || t.days.includes(today)).map((t) => t.id)
@@ -106,15 +109,15 @@ async function getPatientSummaries(patientIds) {
     // Only successful statuses count toward the routine — 'skipped'/'missed'
     // logs must not fill the progress bar.
     const medsDone = new Set(
-      patientMedLogs.filter((l) => l.status === 'taken').map((l) => l.medication_id)
+      patientMedLogs.filter((l) => l.status === 'taken').map((l) => l.schedule_id || l.medication_id)
     );
     const tasksDone = new Set(
       patientTaskComps.filter((c) => c.status === 'completed').map((c) => c.task_id)
     );
 
-    const routineTotal = todayMedIds.size + todayTaskIds.size;
+    const routineTotal = todayMedSlots.length + todayTaskIds.size;
     const routineDone =
-      [...todayMedIds].filter((id) => medsDone.has(id)).length +
+      todayMedSlots.filter((slot) => medsDone.has(slot.scheduleId || slot.medicationId)).length +
       [...todayTaskIds].filter((id) => tasksDone.has(id)).length;
 
     const lowStockCount = patientMeds.filter(
@@ -133,6 +136,7 @@ async function getPatientSummaries(patientIds) {
 
 export default function CaregiverHomeScreen({ navigation }) {
   const [caregiverName, setCaregiverName] = useState('');
+  const [caregiverId, setCaregiverId] = useState(null);
   const [patients, setPatients] = useState([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -146,7 +150,7 @@ export default function CaregiverHomeScreen({ navigation }) {
 
   const { width } = useWindowDimensions();
 
-  const scale = width / 375;
+  const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
   const hour = new Date().getHours();
@@ -156,6 +160,7 @@ export default function CaregiverHomeScreen({ navigation }) {
     try {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) return;
+      setCaregiverId(user.id);
 
       const { data: profile } = await supabase
         .from('profiles')
@@ -167,7 +172,6 @@ export default function CaregiverHomeScreen({ navigation }) {
       const { data, error } = await supabase
         .from('patients')
         .select('*')
-        .eq('created_by', user.id)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -176,7 +180,17 @@ export default function CaregiverHomeScreen({ navigation }) {
         return;
       }
 
-      const base = data || [];
+      const { data: links, error: linksError } = await supabase
+        .from('caregiver_patient')
+        .select('patient_id, permission_level')
+        .eq('caregiver_id', user.id);
+      if (linksError) throw linksError;
+
+      const permissionByPatient = new Map((links || []).map((link) => [link.patient_id, link.permission_level]));
+      const base = (data || []).map((patient) => ({
+        ...patient,
+        permissionLevel: patient.created_by === user.id ? 'owner' : (permissionByPatient.get(patient.id) || 'viewer'),
+      }));
       // Show the list immediately with placeholder summaries so the screen
       // isn't blocked waiting on the heavier per-patient stats.
       setPatients(base.map((patient) => ({
@@ -272,11 +286,14 @@ export default function CaregiverHomeScreen({ navigation }) {
           .from('emergency_contacts')
           .insert({
             patient_id: patient.id,
-            name: 'Patient Phone',
+            name: 'Emergency contact',
             phone: newPatientPhone.trim(),
             priority: 1,
           });
-        if (contactError) console.error('emergency_contacts insert failed', contactError);
+        if (contactError) {
+          console.error('emergency_contacts insert failed', contactError);
+          Alert.alert('Patient added', 'The care plan was created, but the emergency contact number could not be saved. You can add it later.');
+        }
       }
 
       // Show the new patient immediately, regardless of how the follow-up
@@ -304,6 +321,30 @@ export default function CaregiverHomeScreen({ navigation }) {
     }
   };
 
+  const handleResetPairing = async (patient) => {
+    if (addLoading) return;
+    setAddLoading(true);
+    const code = generateCode();
+    try {
+      const { error } = await supabase.rpc('reset_patient_pairing', {
+        p_patient_id: patient.id,
+        p_code: code,
+      });
+      if (error) {
+        console.error('reset_patient_pairing failed', error);
+        Alert.alert('Error', error.message || 'Could not generate a new pairing code.');
+        return;
+      }
+      setSuccessCode({ name: patient.name, code, reset: true });
+      await fetchPatients();
+    } catch (err) {
+      console.error('handleResetPairing failed', err);
+      Alert.alert('Error', 'Could not generate a new pairing code. Please try again.');
+    } finally {
+      setAddLoading(false);
+    }
+  };
+
   const handleRemovePatient = (patient) => {
     Alert.alert(
       'Remove Patient',
@@ -311,25 +352,29 @@ export default function CaregiverHomeScreen({ navigation }) {
       [
         { text: 'Cancel', style: 'cancel' },
         {
+          text: 'Reset Pairing Code',
+          onPress: () => handleResetPairing(patient),
+        },
+        {
           text: 'Remove',
           style: 'destructive',
           onPress: async () => {
-            const id = patient.id;
-            await Promise.all([
-              supabase.from('medication_log').delete().eq('patient_id', id),
-              supabase.from('medication_schedule').delete().eq('patient_id', id),
-              supabase.from('task_completion').delete().eq('patient_id', id),
-              supabase.from('care_notes').delete().eq('patient_id', id),
-              supabase.from('vital_signs').delete().eq('patient_id', id),
-              supabase.from('mood_logs').delete().eq('patient_id', id),
-              supabase.from('appointments').delete().eq('patient_id', id),
-              supabase.from('emergency_contacts').delete().eq('patient_id', id),
-            ]);
-            await supabase.from('medications').delete().eq('patient_id', id);
-            await supabase.from('tasks').delete().eq('patient_id', id);
-            await supabase.from('pairing_codes').delete().eq('code', patient.pair_code);
-            await supabase.from('patients').delete().eq('id', id);
-            fetchPatients();
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user || user.id !== patient.created_by) {
+              Alert.alert('Not allowed', 'Only the patient owner can remove this care plan.');
+              return;
+            }
+            const { error: patientError } = await supabase.from('patients').delete().eq('id', patient.id);
+            if (patientError) {
+              console.error('patient delete failed', patientError);
+              Alert.alert('Error', patientError.message || 'Could not remove this patient.');
+              return;
+            }
+            if (patient.pair_code) {
+              const { error: codeError } = await supabase.from('pairing_codes').delete().eq('code', patient.pair_code);
+              if (codeError) console.warn('pairing code cleanup failed', codeError);
+            }
+            await fetchPatients();
           },
         },
       ]
@@ -360,14 +405,15 @@ export default function CaregiverHomeScreen({ navigation }) {
 
   const renderPatient = ({ item }) => {
     const paired = !!item.paired_user_id;
+    const isOwner = item.created_by === caregiverId;
     const hasRoutine = item.routineTotal > 0;
     const routineComplete = hasRoutine && item.routineDone >= item.routineTotal;
 
     return (
       <TouchableOpacity
         activeOpacity={0.75}
-        onPress={() => navigation.navigate('PatientDetail', { patientId: item.id, patientName: item.name })}
-        onLongPress={() => handleRemovePatient(item)}
+        onPress={() => navigation.navigate('PatientDetail', { patientId: item.id, patientName: item.name, canEdit: item.permissionLevel !== 'viewer' })}
+        onLongPress={() => isOwner && handleRemovePatient(item)}
         accessibilityLabel={`${item.name} care plan${item.lowStockCount > 0 ? ', medication running low' : ''}`}
         style={[styles.card, { padding: s(16), borderRadius: 14, marginBottom: s(12) }]}
       >
@@ -628,7 +674,7 @@ export default function CaregiverHomeScreen({ navigation }) {
               <Ionicons name="checkmark" size={s(26)} color={SUCCESS} />
             </View>
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY, marginTop: s(14) }}>
-              {successCode?.name} was added
+              {successCode?.reset ? `${successCode?.name}'s pairing code was reset` : `${successCode?.name} was added`}
             </Text>
             <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: MUTED, textAlign: 'center', marginTop: s(6) }}>
               Share this code so they can connect from the app's welcome screen.
@@ -701,6 +747,7 @@ const styles = StyleSheet.create({
   modalCard: {
     backgroundColor: WHITE,
     width: '85%',
+    maxWidth: 440,
   },
   label: {
     fontFamily: 'DMSans_500Medium',

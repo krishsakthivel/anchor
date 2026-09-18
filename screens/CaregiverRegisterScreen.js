@@ -48,13 +48,22 @@ export default function CaregiverRegisterScreen({ navigation }) {
 
     setLoading(true);
 
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email: email.trim(),
-      password,
-      options: {
-        data: { role: 'caregiver' },
-      },
-    });
+    let data;
+    let signUpError;
+    try {
+      ({ data, error: signUpError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: { role: 'caregiver' },
+        },
+      }));
+    } catch (err) {
+      console.error('signUp failed', err);
+      setLoading(false);
+      setError('Could not connect. Please try again.');
+      return;
+    }
 
     setLoading(false);
 

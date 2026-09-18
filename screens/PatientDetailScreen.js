@@ -22,7 +22,7 @@ const TABS = ['Medications', 'Tasks', 'Notes', 'Vitals', 'Appointments', 'Mood',
 const REPORT_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 export default function PatientDetailScreen({ route, navigation }) {
-  const { patientId, patientName } = route.params;
+  const { patientId, patientName, canEdit = true } = route.params;
   const { width } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState('Medications');
   const [medications, setMedications] = useState([]);
@@ -41,22 +41,27 @@ export default function PatientDetailScreen({ route, navigation }) {
   const [taskTime, setTaskTime] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const scale = width / 375;
+  const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
   const fetchData = async () => {
-    const { data: meds } = await supabase
+    const { data: meds, error: medsError } = await supabase
       .from('medications')
       .select('*')
       .eq('patient_id', patientId)
       .order('created_at', { ascending: false });
 
-    const { data: taskData } = await supabase
+    const { data: taskData, error: tasksError } = await supabase
       .from('tasks')
       .select('*')
       .eq('patient_id', patientId)
       .order('created_at', { ascending: false });
 
+    if (medsError || tasksError) {
+      console.error('patient detail fetch failed', medsError || tasksError);
+      Alert.alert('Error', 'Could not load this care plan. Pull down to try again.');
+      return;
+    }
     setMedications(meds || []);
     setTasks(taskData || []);
   };
@@ -72,6 +77,14 @@ export default function PatientDetailScreen({ route, navigation }) {
 
   const handleAddMedication = async () => {
     if (!medName.trim()) return;
+    const totalPills = medTotalPills.trim() === '' ? null : Number(medTotalPills);
+    const pillsRemaining = medPillsRemaining.trim() === '' ? null : Number(medPillsRemaining);
+    if ((totalPills !== null && (!Number.isInteger(totalPills) || totalPills < 0))
+      || (pillsRemaining !== null && (!Number.isInteger(pillsRemaining) || pillsRemaining < 0))
+      || (totalPills !== null && pillsRemaining !== null && pillsRemaining > totalPills)) {
+      Alert.alert('Invalid pill count', 'Use whole, non-negative numbers. Remaining pills cannot be more than the total.');
+      return;
+    }
     setLoading(true);
 
     const { data: { user } } = await supabase.auth.getUser();
@@ -95,8 +108,8 @@ export default function PatientDetailScreen({ route, navigation }) {
         name: medName.trim(),
         dosage: medDosage.trim() || null,
         instructions: medInstructions.trim() || null,
-        total_pills: medTotalPills ? parseInt(medTotalPills) : null,
-        pills_remaining: medPillsRemaining ? parseInt(medPillsRemaining) : null,
+        total_pills: totalPills,
+        pills_remaining: pillsRemaining,
         created_by: user.id,
       })
       .select()
@@ -120,7 +133,8 @@ export default function PatientDetailScreen({ route, navigation }) {
         });
 
       if (scheduleError) {
-        await supabase.from('medications').delete().eq('id', med.id);
+          const { error: rollbackError } = await supabase.from('medications').delete().eq('id', med.id);
+          if (rollbackError) console.error('medication rollback failed', rollbackError);
         setLoading(false);
         Alert.alert('Error', 'Medication was not saved because its schedule could not be created.');
         return;
@@ -188,9 +202,12 @@ export default function PatientDetailScreen({ route, navigation }) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await supabase.from('medication_schedule').delete().eq('medication_id', medId);
-          await supabase.from('medications').delete().eq('id', medId);
-          fetchData();
+          const { error } = await supabase.from('medications').delete().eq('id', medId);
+          if (error) {
+            Alert.alert('Error', error.message || 'Could not delete this medication.');
+            return;
+          }
+          await fetchData();
         },
       },
     ]);
@@ -203,9 +220,12 @@ export default function PatientDetailScreen({ route, navigation }) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await supabase.from('task_completion').delete().eq('task_id', taskId);
-          await supabase.from('tasks').delete().eq('id', taskId);
-          fetchData();
+          const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+          if (error) {
+            Alert.alert('Error', error.message || 'Could not delete this task.');
+            return;
+          }
+          await fetchData();
         },
       },
     ]);
@@ -217,21 +237,23 @@ export default function PatientDetailScreen({ route, navigation }) {
       {
         text: 'Subtract 1',
         onPress: async () => {
-          await supabase
+          const { error } = await supabase
             .from('medications')
             .update({ pills_remaining: Math.max(0, (med.pills_remaining || 0) - 1) })
             .eq('id', med.id);
-          fetchData();
+          if (error) Alert.alert('Error', error.message || 'Could not update the pill count.');
+          else await fetchData();
         },
       },
       {
         text: 'Refill',
         onPress: async () => {
-          await supabase
+          const { error } = await supabase
             .from('medications')
             .update({ pills_remaining: med.total_pills || 30 })
             .eq('id', med.id);
-          fetchData();
+          if (error) Alert.alert('Error', error.message || 'Could not update the pill count.');
+          else await fetchData();
         },
       },
     ]);
@@ -244,9 +266,9 @@ export default function PatientDetailScreen({ route, navigation }) {
           <>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Medications</Text>
-              <TouchableOpacity onPress={() => setAddMedVisible(true)}>
+              {canEdit && <TouchableOpacity onPress={() => setAddMedVisible(true)}>
                 <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>+ Add</Text>
-              </TouchableOpacity>
+              </TouchableOpacity>}
             </View>
             {medications.length === 0 ? (
               <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No medications added yet</Text>
@@ -254,14 +276,14 @@ export default function PatientDetailScreen({ route, navigation }) {
               medications.map((med) => (
                 <TouchableOpacity
                   key={med.id}
-                  onLongPress={() => handleDeleteMed(med.id)}
+                  onLongPress={() => canEdit && handleDeleteMed(med.id)}
                   style={{ backgroundColor: '#F0F4FF', padding: s(12), borderRadius: 8, marginBottom: s(8) }}
                 >
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(15), color: NAVY }}>{med.name}</Text>
                   {med.dosage && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{med.dosage}</Text>}
                   {med.instructions && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#999' }}>{med.instructions}</Text>}
                   {med.total_pills && (
-                    <TouchableOpacity onPress={() => handleUpdatePills(med)}>
+                    <TouchableOpacity disabled={!canEdit} onPress={() => canEdit && handleUpdatePills(med)}>
                       <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: med.pills_remaining <= (med.refill_alert_at || 10) ? '#C0392B' : '#666', marginTop: s(4) }}>
                         Pills: {med.pills_remaining}/{med.total_pills}
                         {med.pills_remaining <= (med.refill_alert_at || 10) ? ' ⚠️ Low' : ''}
@@ -279,9 +301,9 @@ export default function PatientDetailScreen({ route, navigation }) {
           <>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Tasks</Text>
-              <TouchableOpacity onPress={() => setAddTaskVisible(true)}>
+              {canEdit && <TouchableOpacity onPress={() => setAddTaskVisible(true)}>
                 <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>+ Add</Text>
-              </TouchableOpacity>
+              </TouchableOpacity>}
             </View>
             {tasks.length === 0 ? (
               <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No tasks added yet</Text>
@@ -289,7 +311,7 @@ export default function PatientDetailScreen({ route, navigation }) {
               tasks.map((task) => (
                 <TouchableOpacity
                   key={task.id}
-                  onLongPress={() => handleDeleteTask(task.id)}
+                  onLongPress={() => canEdit && handleDeleteTask(task.id)}
                   style={{ backgroundColor: '#F5F5F5', padding: s(12), borderRadius: 8, marginBottom: s(8) }}
                 >
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(15), color: NAVY }}>{task.title}</Text>
@@ -301,7 +323,7 @@ export default function PatientDetailScreen({ route, navigation }) {
         );
 
       case 'Notes':
-        return <CareNotesTab patientId={patientId} />;
+        return <CareNotesTab patientId={patientId} canEdit={canEdit} />;
 
       case 'Vitals':
         return <VitalsTab patientId={patientId} />;
@@ -417,7 +439,7 @@ export default function PatientDetailScreen({ route, navigation }) {
   );
 }
 
-function CareNotesTab({ patientId }) {
+function CareNotesTab({ patientId, canEdit }) {
   const { width } = useWindowDimensions();
   const s = (size) => Math.round(size * (width / 375));
   const [notes, setNotes] = useState([]);
@@ -442,8 +464,12 @@ function CareNotesTab({ patientId }) {
       Alert.alert('Session expired', 'Please sign in again before adding a note.');
       return;
     }
-    await supabase.from('care_notes').insert({ patient_id: patientId, created_by: user.id, title: noteTitle.trim(), body: noteBody.trim() });
+    const { error } = await supabase.from('care_notes').insert({ patient_id: patientId, created_by: user.id, title: noteTitle.trim(), body: noteBody.trim() });
     setLoading(false);
+    if (error) {
+      Alert.alert('Error', error.message || 'Could not add this note.');
+      return;
+    }
     setAddVisible(false);
     setNoteTitle('');
     setNoteBody('');
@@ -451,29 +477,31 @@ function CareNotesTab({ patientId }) {
   };
 
   const handleTogglePin = async (note) => {
-    await supabase.from('care_notes').update({ pinned: !note.pinned }).eq('id', note.id);
-    fetchNotes();
+    const { error } = await supabase.from('care_notes').update({ pinned: !note.pinned }).eq('id', note.id);
+    if (error) Alert.alert('Error', error.message || 'Could not update this note.');
+    else fetchNotes();
   };
 
   return (
     <>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}>
         <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Care Notes</Text>
-        <TouchableOpacity onPress={() => setAddVisible(true)}>
+        {canEdit && <TouchableOpacity onPress={() => setAddVisible(true)}>
           <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>+ Add</Text>
-        </TouchableOpacity>
+        </TouchableOpacity>}
       </View>
       {notes.length === 0 ? (
         <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No notes yet</Text>
       ) : (
         notes.map((note) => (
-          <TouchableOpacity key={note.id} onLongPress={() => handleTogglePin(note)} style={{ backgroundColor: note.pinned ? '#FFF8E1' : '#F5F5F5', padding: s(14), borderRadius: 8, marginBottom: s(8), borderLeftWidth: note.pinned ? 3 : 0, borderLeftColor: NAVY }}>
+          <TouchableOpacity key={note.id} onLongPress={() => canEdit && handleTogglePin(note)} style={{ backgroundColor: note.pinned ? '#FFF8E1' : '#F5F5F5', padding: s(14), borderRadius: 8, marginBottom: s(8), borderLeftWidth: note.pinned ? 3 : 0, borderLeftColor: NAVY }}>
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>{note.pinned ? '📌 ' : ''}{note.title}</Text>
             <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#333', marginTop: s(4) }}>{note.body}</Text>
           </TouchableOpacity>
         ))
       )}
       <Modal visible={addVisible} animationType="slide" transparent>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Note</Text>
@@ -483,6 +511,7 @@ function CareNotesTab({ patientId }) {
             <Button title="Cancel" onPress={() => { setAddVisible(false); setNoteTitle(''); setNoteBody(''); }} style={{ backgroundColor: '#999' }} />
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </>
   );

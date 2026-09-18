@@ -1,11 +1,27 @@
-# Sample Snack app
+# Anchor
 
-Open the `App.js` file to start writing some code. You can preview the changes directly on your phone or tablet by scanning the **QR code** or use the iOS or Android emulators. When you're done, click **Save** and share the link!
+Anchor is an Expo phone app for shared caregiving: caregivers create care plans, and patients use a simple daily check-in screen.
 
-When you're ready to see everything that Expo provides (or if you want to use your own editor) you can **Download** your project and use it with [expo cli](https://docs.expo.dev/get-started/installation/#expo-cli)).
+## Run locally
 
-All projects created in Snack are publicly available, so you can easily share the link to this project via link, or embed it on a web page with the `<>` button.
+1. Copy `.env.example` to `.env` and fill in the Supabase project URL and anon key.
+2. In Supabase SQL Editor, run `lib/schema.sql` for a new project. It contains the tables, RLS policies, and pairing functions the app needs.
+3. Install and start the app:
 
-If you're having problems, you can tweet to us [@expo](https://twitter.com/expo) or ask in our [forums](https://forums.expo.dev/c/expo-dev-tools/61) or [Discord](https://chat.expo.dev/).
+   ```bash
+   npm install
+   npx expo start --tunnel
+   ```
 
-Snack is Open Source. You can find the code on the [GitHub repo](https://github.com/expo/snack).
+The displayed QR code opens the project in Expo Go. For a web preview, use `npx expo start --web`.
+
+## Important setup
+
+Configure a password-recovery redirect URL in Supabase Auth for `anchor://reset-password` (and your deployed web reset URL, if you use the web app). Pairing codes are eight digits and expire after 24 hours. An owner can long-press a patient card to reset their pairing code if the patient needs to reconnect.
+
+## Checks
+
+```bash
+npx expo-doctor
+npx expo export --platform web
+```
