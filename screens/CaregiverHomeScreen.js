@@ -11,6 +11,8 @@ import {
   Modal,
   TouchableOpacity,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -469,6 +471,8 @@ export default function CaregiverHomeScreen({ navigation }) {
               <View style={{ flexDirection: 'row' }}>
                 <TouchableOpacity
                   onPress={() => setAddModalVisible(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add patient"
                   style={[styles.iconBtn, { width: s(40), height: s(40), borderRadius: s(20) }]}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
@@ -476,6 +480,8 @@ export default function CaregiverHomeScreen({ navigation }) {
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => navigation.navigate('Profile')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open profile"
                   style={[styles.iconBtn, { width: s(40), height: s(40), borderRadius: s(20), marginLeft: s(8) }]}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
@@ -483,6 +489,8 @@ export default function CaregiverHomeScreen({ navigation }) {
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={handleSignOut}
+                  accessibilityRole="button"
+                  accessibilityLabel="Sign out"
                   style={[styles.iconBtn, { width: s(40), height: s(40), borderRadius: s(20), marginLeft: s(8) }]}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
@@ -548,6 +556,8 @@ export default function CaregiverHomeScreen({ navigation }) {
 
       <TouchableOpacity
         onPress={() => setAddModalVisible(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Add patient"
         style={[styles.fab, { width: s(58), height: s(58), borderRadius: s(29), bottom: s(24), right: s(20) }]}
         activeOpacity={0.85}
       >
@@ -556,7 +566,8 @@ export default function CaregiverHomeScreen({ navigation }) {
 
       {/* Add patient modal */}
       <Modal visible={addModalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { borderRadius: 10, padding: s(24) }]}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: s(16) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY }}>
@@ -564,6 +575,8 @@ export default function CaregiverHomeScreen({ navigation }) {
               </Text>
               <TouchableOpacity
                 onPress={() => { setAddModalVisible(false); setNewPatientName(''); setNewPatientPhone(''); }}
+                accessibilityRole="button"
+                accessibilityLabel="Close add patient dialog"
                 style={[styles.iconBtn, { width: s(32), height: s(32), borderRadius: s(16) }]}
               >
                 <Ionicons name="close" size={s(18)} color={MUTED} />
@@ -603,7 +616,8 @@ export default function CaregiverHomeScreen({ navigation }) {
               textStyle={{ color: TEXT_DARK }}
             />
           </View>
-        </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Pairing code success modal */}

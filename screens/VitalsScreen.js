@@ -10,6 +10,8 @@ import {
   Modal,
   Alert,
   ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import useCustomFonts from '../lib/useCustomFonts';
@@ -169,7 +171,8 @@ export default function VitalsScreen({ route }) {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListFooterComponent={
         <Modal visible={addVisible} animationType="slide" transparent>
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Log Vital</Text>
 
@@ -227,7 +230,8 @@ export default function VitalsScreen({ route }) {
               <Button title={loading ? 'Logging...' : 'Log Vital'} onPress={handleAddVital} disabled={!selectedType || !vitalValue.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
               <Button title="Cancel" onPress={() => { setAddVisible(false); setSelectedType(null); setVitalValue(''); setVitalNote(''); }} style={{ backgroundColor: '#999' }} />
             </View>
-          </View>
+            </View>
+          </KeyboardAvoidingView>
         </Modal>
       }
     />

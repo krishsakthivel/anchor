@@ -9,6 +9,8 @@ import {
   TextInput,
   Modal,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import useCustomFonts from '../lib/useCustomFonts';
@@ -211,7 +213,8 @@ export default function AppointmentsScreen({ route }) {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListFooterComponent={
         <Modal visible={addVisible} animationType="slide" transparent>
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Appointment</Text>
 
@@ -272,7 +275,8 @@ export default function AppointmentsScreen({ route }) {
               <Button title={loading ? 'Adding...' : 'Add Appointment'} onPress={handleAdd} disabled={!title.trim() || !date.trim() || !time.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
               <Button title="Cancel" onPress={() => { setAddVisible(false); setTitle(''); setDoctor(''); setLocation(''); setDate(''); setTime(''); setNotes(''); }} style={{ backgroundColor: '#999' }} />
             </View>
-          </View>
+            </View>
+          </KeyboardAvoidingView>
         </Modal>
       }
     />

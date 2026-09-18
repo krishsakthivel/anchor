@@ -10,6 +10,8 @@ import {
   TextInput,
   Modal,
   ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
@@ -357,7 +359,8 @@ export default function PatientDetailScreen({ route, navigation }) {
         ListFooterComponent={
           <>
             <Modal visible={addMedVisible} animationType="slide" transparent>
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+              <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
                 <ScrollView style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%', maxHeight: '80%' }}>
                   <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Medication</Text>
 
@@ -382,11 +385,13 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <Button title={loading ? 'Adding...' : 'Add Medication'} onPress={handleAddMedication} disabled={!medName.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
                   <Button title="Cancel" onPress={() => { setAddMedVisible(false); setMedName(''); setMedDosage(''); setMedTime(''); setMedInstructions(''); setMedTotalPills(''); setMedPillsRemaining(''); }} style={{ backgroundColor: '#999' }} />
                 </ScrollView>
-              </View>
+                </View>
+              </KeyboardAvoidingView>
             </Modal>
 
             <Modal visible={addTaskVisible} animationType="slide" transparent>
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+              <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
                 <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
                   <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Task</Text>
 
@@ -402,7 +407,8 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <Button title={loading ? 'Adding...' : 'Add Task'} onPress={handleAddTask} disabled={!taskTitle.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
                   <Button title="Cancel" onPress={() => { setAddTaskVisible(false); setTaskTitle(''); setTaskDesc(''); setTaskTime(''); }} style={{ backgroundColor: '#999' }} />
                 </View>
-              </View>
+                </View>
+              </KeyboardAvoidingView>
             </Modal>
           </>
         }
