@@ -27,6 +27,12 @@ const VITAL_TYPES = [
   { key: 'oxygen', label: 'Oxygen Level', unit: '%', placeholder: '98' },
 ];
 
+const isValidVitalValue = (type, value) => {
+  const trimmed = value.trim();
+  if (type === 'blood_pressure') return /^\d{2,3}\s*\/\s*\d{2,3}$/.test(trimmed);
+  return /^\d+(\.\d+)?$/.test(trimmed) && Number(trimmed) > 0;
+};
+
 export default function VitalsScreen({ route }) {
   const { patientId, isPatient } = route.params;
   const { width } = useWindowDimensions();
@@ -39,7 +45,7 @@ export default function VitalsScreen({ route }) {
   const [vitalNote, setVitalNote] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const scale = width / 375;
+  const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
   const fetchVitals = async () => {
@@ -65,6 +71,15 @@ export default function VitalsScreen({ route }) {
 
   const handleAddVital = async () => {
     if (!selectedType || !vitalValue.trim()) return;
+    if (!isValidVitalValue(selectedType.key, vitalValue)) {
+      Alert.alert(
+        'Invalid reading',
+        selectedType.key === 'blood_pressure'
+          ? 'Enter blood pressure as two numbers, such as 120/80.'
+          : 'Enter a positive number for this reading.'
+      );
+      return;
+    }
     setLoading(true);
 
     const { error } = await supabase
@@ -173,7 +188,7 @@ export default function VitalsScreen({ route }) {
         <Modal visible={addVisible} animationType="slide" transparent>
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
-            <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
+            <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%', maxWidth: 440 }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Log Vital</Text>
 
               <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(8) }}>Type</Text>

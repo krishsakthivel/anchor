@@ -28,7 +28,7 @@ export default function CareNotesScreen({ route }) {
   const [noteBody, setNoteBody] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const scale = width / 375;
+  const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
   const fetchNotes = async () => {
@@ -170,7 +170,7 @@ export default function CareNotesScreen({ route }) {
         <Modal visible={addVisible} animationType="slide" transparent>
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
-            <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
+            <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%', maxWidth: 440 }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Note</Text>
 
               <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Title</Text>

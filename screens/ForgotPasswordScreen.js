@@ -38,9 +38,20 @@ export default function ForgotPasswordScreen({ navigation }) {
 
     setLoading(true);
 
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: 'anchor://reset-password',
-    });
+    let resetError;
+    try {
+      const redirectTo = Platform.OS === 'web' && typeof window !== 'undefined'
+        ? `${window.location.origin}/reset-password`
+        : 'anchor://reset-password';
+      ({ error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo,
+      }));
+    } catch (err) {
+      console.error('resetPasswordForEmail failed', err);
+      setLoading(false);
+      setError('Could not connect. Please try again.');
+      return;
+    }
 
     setLoading(false);
 

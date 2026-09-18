@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, FlatList, useWindowDimensions, RefreshControl, TouchableOpacity, Alert, Linking, TextInput, Modal, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
@@ -20,6 +20,22 @@ const VITAL_UNITS = {
   temperature: '°F',
   heart_rate: 'bpm',
   oxygen: '%',
+};
+
+const isDayConfigured = (days, day) => {
+  if (Array.isArray(days)) return days.includes(day);
+  return typeof days === 'string' && days.includes(day);
+};
+
+const formatScheduleTime = (time) => {
+  if (!time) return '';
+  const [hour = '', minute = ''] = String(time).split(':');
+  if (!hour || !minute) return '';
+  const hourNumber = Number(hour);
+  if (!Number.isFinite(hourNumber)) return '';
+  const suffix = hourNumber >= 12 ? 'PM' : 'AM';
+  const displayHour = hourNumber % 12 || 12;
+  return `${displayHour}:${minute} ${suffix}`;
 };
 
 export default function PatientHomeScreen({ route, navigation }) {
@@ -46,12 +62,16 @@ export default function PatientHomeScreen({ route, navigation }) {
 
   const [fetchError, setFetchError] = useState('');
   const [loadingInitial, setLoadingInitial] = useState(true);
+  const [claimedPatientId, setClaimedPatientId] = useState(null);
+  const pendingMedLogs = useRef(new Set());
+  const pendingTaskCompletions = useRef(new Set());
 
-  const scale = width / 375;
+  const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
   const code = route?.params?.code;
-  const patientId = route?.params?.patientId;
+  const routePatientId = route?.params?.patientId;
+  const patientId = routePatientId || claimedPatientId;
   const today = DAYS[new Date().getDay()];
   const hour = new Date().getHours();
   let greeting = 'Evening';
@@ -64,93 +84,122 @@ export default function PatientHomeScreen({ route, navigation }) {
 
   const fetchData = async () => {
     setFetchError('');
-    let { data: { user } } = await supabase.auth.getUser();
+    try {
+      let { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) throw userError;
 
     // Patients don't have a traditional account — they just enter a code.
     // Give them a lightweight anonymous session so the app has an auth.uid()
     // to attach their data to and to satisfy row-level security policies.
-    if (!user) {
-      const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
-      if (anonError || !anonData?.user) {
-        console.error('signInAnonymously failed', anonError);
-        let message = anonError?.message || 'Could not connect. Please try again.';
-        if (anonError?.message?.includes('disabled') || anonError?.status === 422) {
-          message = 'Anonymous sign-in is disabled for this project. Ask your developer to enable it in Supabase Auth settings.';
-        } else if (anonError?.message?.toLowerCase().includes('database error creating anonymous user')) {
-          message = "Your caregiver's app isn't set up to support patient accounts yet (a database trigger needs to allow anonymous users). Ask your developer to check the profiles trigger in Supabase.";
+      if (!user) {
+        const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
+        if (anonError || !anonData?.user) {
+          console.error('signInAnonymously failed', anonError);
+          let message = anonError?.message || 'Could not connect. Please try again.';
+          if (anonError?.message?.includes('disabled') || anonError?.status === 422) {
+            message = 'Anonymous sign-in is disabled for this project. Ask your developer to enable it in Supabase Auth settings.';
+          } else if (anonError?.message?.toLowerCase().includes('database error creating anonymous user')) {
+            message = "Your caregiver's app isn't set up to support patient accounts yet (a database trigger needs to allow anonymous users). Ask your developer to check the profiles trigger in Supabase.";
+          }
+          setFetchError(message);
+          return;
         }
-        setFetchError(message);
-        setLoadingInitial(false);
-        return;
-      }
-      user = anonData.user;
-    }
-
-    let patientData = null;
-
-    if (patientId) {
-      const { data } = await supabase.from('patients').select('*').eq('id', patientId).single();
-      patientData = data;
-    } else if (code) {
-      const { data: claimed, error: claimError } = await supabase.rpc('claim_patient_code', {
-        p_code: code.toUpperCase(),
-      });
-
-      if (claimError || !claimed) {
-        console.error('claim_patient_code failed', claimError);
-        Alert.alert(
-          'Invalid Code',
-          claimError?.message || 'This code is invalid or has already been used.',
-          [{ text: 'OK', onPress: () => navigation.navigate('Landing') }]
-        );
-        setLoadingInitial(false);
-        return;
+        user = anonData.user;
       }
 
-      patientData = claimed;
-    }
+      let patientData = null;
 
-    if (!patientData) {
-      setLoadingInitial(false);
-      return;
-    }
-    setPatient(patientData);
+      if (patientId) {
+        const { data, error } = await supabase.from('patients').select('*').eq('id', patientId).single();
+        if (error) throw error;
+        patientData = data;
+      } else if (code) {
+        const { data: claimed, error: claimError } = await supabase.rpc('claim_patient_code', {
+          p_code: code.toUpperCase(),
+        });
 
-    const { data: schedules } = await supabase.from('medication_schedule').select('*').eq('patient_id', patientData.id).eq('active', true);
-    const { data: meds } = await supabase.from('medications').select('*').eq('patient_id', patientData.id);
+        if (claimError || !claimed) {
+          console.error('claim_patient_code failed', claimError);
+          Alert.alert(
+            'Invalid Code',
+            claimError?.message || 'This code is invalid or has already been used.',
+            [{ text: 'OK', onPress: () => navigation.navigate('Landing') }]
+          );
+          return;
+        }
+
+        patientData = claimed;
+        // The code is a one-time credential. Replace it with the resolved
+        // patient id so refreshes and logging actions never try to claim it a
+        // second time.
+        setClaimedPatientId(claimed.id);
+        navigation.setParams({ patientId: claimed.id, code: undefined });
+      }
+
+      if (!patientData) return;
+      setPatient(patientData);
+
+      const { data: schedules, error: schedulesError } = await supabase.from('medication_schedule').select('*').eq('patient_id', patientData.id).eq('active', true);
+      if (schedulesError) throw schedulesError;
+      const { data: meds, error: medsError } = await supabase.from('medications').select('*').eq('patient_id', patientData.id);
+      if (medsError) throw medsError;
     // Meds with no schedule row (caregiver didn't set a time) have no daily
     // restriction — treat them as due every day so they never go missing.
-    const todayMeds = (meds || []).filter((med) => {
-      const schedule = (schedules || []).find((s) => s.medication_id === med.id);
-      return !schedule || (schedule.days || '').includes(today);
+    const todayMeds = [];
+    (meds || []).forEach((med) => {
+      const medSchedules = (schedules || []).filter((schedule) => schedule.medication_id === med.id);
+      const dueSchedules = medSchedules.filter((schedule) => isDayConfigured(schedule.days, today));
+      if (!medSchedules.length) {
+        todayMeds.push({ ...med, schedule_id: null, schedule_time: null, slotKey: `${med.id}:default` });
+      } else {
+        dueSchedules.forEach((schedule) => {
+          todayMeds.push({
+            ...med,
+            schedule_id: schedule.id,
+            schedule_time: schedule.time,
+            slotKey: schedule.id,
+          });
+        });
+      }
     });
-    setMedications(todayMeds);
+      setMedications(todayMeds);
 
-    const { data: taskData } = await supabase.from('tasks').select('*').eq('patient_id', patientData.id).eq('active', true);
-    const todayTasks = (taskData || []).filter((t) => !t.days || t.days.includes(today));
-    setTasks(todayTasks);
+      const { data: taskData, error: tasksError } = await supabase.from('tasks').select('*').eq('patient_id', patientData.id).eq('active', true);
+      if (tasksError) throw tasksError;
+      const todayTasks = (taskData || []).filter((t) => !t.days || isDayConfigured(t.days, today));
+      setTasks(todayTasks);
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    const { data: logs } = await supabase.from('medication_log').select('*').eq('patient_id', patientData.id).gte('logged_at', todayStart.toISOString());
-    setMedLogs(logs || []);
+      const { data: logs, error: logsError } = await supabase.from('medication_log').select('*').eq('patient_id', patientData.id).gte('logged_at', todayStart.toISOString());
+      if (logsError) throw logsError;
+      setMedLogs(logs || []);
 
-    const { data: comps } = await supabase.from('task_completion').select('*').eq('patient_id', patientData.id).gte('completed_at', todayStart.toISOString());
-    setTaskCompletions(comps || []);
+      const { data: comps, error: compsError } = await supabase.from('task_completion').select('*').eq('patient_id', patientData.id).gte('completed_at', todayStart.toISOString());
+      if (compsError) throw compsError;
+      setTaskCompletions(comps || []);
 
-    const { data: caregiver } = await supabase.from('caregiver_phone').select('phone').eq('user_id', patientData.created_by).single();
-    setCaregiverPhone(caregiver?.phone || '');
+      const { data: caregiver, error: caregiverError } = await supabase.from('caregiver_phone').select('phone').eq('user_id', patientData.created_by).maybeSingle();
+      if (caregiverError) throw caregiverError;
+      setCaregiverPhone(caregiver?.phone || '');
 
-    const { data: notes } = await supabase.from('care_notes').select('*').eq('patient_id', patientData.id).order('pinned', { ascending: false }).order('created_at', { ascending: false }).limit(3);
-    setCareNotes(notes || []);
+      const { data: notes, error: notesError } = await supabase.from('care_notes').select('*').eq('patient_id', patientData.id).order('pinned', { ascending: false }).order('created_at', { ascending: false }).limit(3);
+      if (notesError) throw notesError;
+      setCareNotes(notes || []);
 
-    const { data: todayMood } = await supabase.from('mood_logs').select('*').eq('patient_id', patientData.id).gte('logged_at', todayStart.toISOString()).limit(1);
-    setMoodToday(todayMood?.[0] || null);
-    setLoadingInitial(false);
+      const { data: todayMood, error: moodError } = await supabase.from('mood_logs').select('*').eq('patient_id', patientData.id).gte('logged_at', todayStart.toISOString()).order('logged_at', { ascending: false }).limit(1);
+      if (moodError) throw moodError;
+      setMoodToday(todayMood?.[0] || null);
+    } catch (err) {
+      console.error('PatientHome fetch failed', err);
+      setFetchError('Could not load your care plan. Please try again.');
+    } finally {
+      setLoadingInitial(false);
+    }
   };
 
-  useEffect(() => { fetchData(); }, [patientId, code]);
+  useEffect(() => { fetchData(); }, [routePatientId, code, claimedPatientId]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -158,29 +207,60 @@ export default function PatientHomeScreen({ route, navigation }) {
     setRefreshing(false);
   };
 
-  const isMedTaken = (medId) => medLogs.some((l) => l.medication_id === medId && l.status === 'taken');
+  const isMedTaken = (medication) => medLogs.some((log) => (
+    log.medication_id === medication.id &&
+    (medication.schedule_id ? log.schedule_id === medication.schedule_id : !log.schedule_id) &&
+    log.status === 'taken'
+  ));
   const isTaskDone = (taskId) => taskCompletions.some((c) => c.task_id === taskId && c.status === 'completed');
 
-  const handleLogMed = async (medId, status) => {
-    if (!patient || medLogs.some((log) => log.medication_id === medId)) return;
-    const { error } = await supabase.from('medication_log').insert({ medication_id: medId, patient_id: patient.id, status });
-    if (error) {
-      console.error('medication_log insert failed', error);
-      Alert.alert('Could not save', error.message || 'Please try again.');
-      return;
+  const handleLogMed = async (medication, status) => {
+    if (!patient) return;
+    const logKey = `${medication.id}:${medication.schedule_id || 'default'}`;
+    const alreadyLogged = medLogs.some((log) => (
+      log.medication_id === medication.id &&
+      (medication.schedule_id ? log.schedule_id === medication.schedule_id : !log.schedule_id)
+    ));
+    if (alreadyLogged || pendingMedLogs.current.has(logKey)) return;
+    pendingMedLogs.current.add(logKey);
+    try {
+      const { error } = await supabase.from('medication_log').insert({
+        medication_id: medication.id,
+        patient_id: patient.id,
+        schedule_id: medication.schedule_id || null,
+        status,
+      });
+      if (error) {
+        console.error('medication_log insert failed', error);
+        Alert.alert('Could not save', error.message || 'Please try again.');
+        return;
+      }
+      await fetchData();
+    } catch (err) {
+      console.error('handleLogMed failed', err);
+      Alert.alert('Could not save', 'Something went wrong. Please try again.');
+    } finally {
+      pendingMedLogs.current.delete(logKey);
     }
-    fetchData();
   };
 
   const handleCompleteTask = async (taskId, status) => {
-    if (!patient || taskCompletions.some((completion) => completion.task_id === taskId)) return;
-    const { error } = await supabase.from('task_completion').insert({ task_id: taskId, patient_id: patient.id, status });
-    if (error) {
-      console.error('task_completion insert failed', error);
-      Alert.alert('Could not save', error.message || 'Please try again.');
-      return;
+    if (!patient || taskCompletions.some((completion) => completion.task_id === taskId) || pendingTaskCompletions.current.has(taskId)) return;
+    pendingTaskCompletions.current.add(taskId);
+    try {
+      const { error } = await supabase.from('task_completion').insert({ task_id: taskId, patient_id: patient.id, status });
+      if (error) {
+        console.error('task_completion insert failed', error);
+        Alert.alert('Could not save', error.message || 'Please try again.');
+        return;
+      }
+      await fetchData();
+    } catch (err) {
+      console.error('handleCompleteTask failed', err);
+      Alert.alert('Could not save', 'Something went wrong. Please try again.');
+    } finally {
+      pendingTaskCompletions.current.delete(taskId);
     }
-    fetchData();
   };
 
   const handleLogMood = async () => {
@@ -376,12 +456,13 @@ export default function PatientHomeScreen({ route, navigation }) {
                 const taken = isMedTaken(med.id);
                 return (
                   <TouchableOpacity
-                    key={med.id}
-                    disabled={taken || medLogs.some((log) => log.medication_id === med.id)}
-                    activeOpacity={0.7}
-                    onPress={() => Alert.alert('Mark Medication', `How did ${med.name} go?`, [
-                      { text: 'Taken', onPress: () => handleLogMed(med.id, 'taken') },
-                      { text: 'Skipped', onPress: () => handleLogMed(med.id, 'skipped') },
+                      key={med.slotKey || med.id}
+                      disabled={taken || medLogs.some((log) => log.medication_id === med.id && (med.schedule_id ? log.schedule_id === med.schedule_id : !log.schedule_id))}
+                      activeOpacity={0.7}
+                      onPress={() => Alert.alert('Mark Medication', `How did ${med.name} go?`, [
+                        { text: 'Taken', onPress: () => handleLogMed(med, 'taken') },
+                        { text: 'Skipped', onPress: () => handleLogMed(med, 'skipped') },
+                        { text: 'Missed', onPress: () => handleLogMed(med, 'missed') },
                       { text: 'Cancel', style: 'cancel' },
                     ])}
                     style={{
@@ -400,9 +481,11 @@ export default function PatientHomeScreen({ route, navigation }) {
                       color={taken ? SUCCESS : NAVY}
                       style={{ marginRight: s(14) }}
                     />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{med.name}</Text>
-                      {med.dosage && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{med.dosage}</Text>}
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{med.name}</Text>
+                        {med.dosage && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{med.dosage}</Text>}
+                        {med.schedule_time && <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginTop: s(3) }}>{formatScheduleTime(med.schedule_time)}</Text>}
+                        {med.instructions && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: MUTED, marginTop: s(3) }}>{med.instructions}</Text>}
                     </View>
                   </TouchableOpacity>
                 );
@@ -442,9 +525,10 @@ export default function PatientHomeScreen({ route, navigation }) {
                       color={done ? SUCCESS : NAVY}
                       style={{ marginRight: s(14) }}
                     />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{task.title}</Text>
-                      {task.description && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{task.description}</Text>}
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{task.title}</Text>
+                        {task.description && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{task.description}</Text>}
+                        {task.time && <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginTop: s(3) }}>{formatScheduleTime(task.time)}</Text>}
                     </View>
                   </TouchableOpacity>
                 );

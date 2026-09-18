@@ -4,6 +4,7 @@ export default {
   expo: {
     name: 'anchor',
     slug: 'anchor',
+    scheme: 'anchor',
     version: '1.0.0',
     orientation: 'portrait',
     icon: './assets/icon.png',
@@ -29,8 +30,8 @@ export default {
     },
     plugins: ['expo-font'],
     extra: {
-      supabaseUrl: process.env.SUPABASE_URL,
-      supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
+      supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
+      supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
     },
   },
 };

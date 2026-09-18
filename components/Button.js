@@ -9,6 +9,8 @@ export default function Button({ title, onPress, disabled, loading, style, textS
       onPress={onPress}
       disabled={disabled || loading}
       activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: !!(disabled || loading), busy: !!loading }}
     >
       {loading ? (
         <ActivityIndicator color={WHITE} />
@@ -26,6 +28,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 14,
+    minHeight: 48,
     alignSelf: 'stretch',
   },
   disabled: {

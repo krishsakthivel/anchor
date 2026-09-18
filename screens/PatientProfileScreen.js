@@ -60,7 +60,7 @@ export default function PatientProfileScreen({ navigation }) {
 
       const { error } = await supabase
         .from('profiles')
-        .upsert({ id: user.id, full_name: fullName.trim(), phone: phone.trim(), role: 'patient' });
+        .upsert({ id: user.id, full_name: fullName.trim(), phone: phone.trim() });
 
       if (error) {
         console.error('profiles upsert failed', error);
@@ -194,7 +194,7 @@ export default function PatientProfileScreen({ navigation }) {
               Sign Out
             </Text>
             <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(15), color: MUTED, marginBottom: s(18) }}>
-              Are you sure you want to sign out?
+              Are you sure you want to sign out? You will need a new code from your caregiver to reconnect.
             </Text>
 
             {!!signOutError && (

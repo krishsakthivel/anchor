@@ -77,23 +77,23 @@ export default function LandingScreen({ navigation }) {
               { fontSize: s(17), marginBottom: height * 0.015, opacity: labelFade, textAlign: 'center' },
             ]}
           >
-            Enter the six-digit code from your caregiver
+             Enter the eight-digit code from your caregiver
           </Animated.Text>
           <Animated.View style={{ opacity: inputFade }}>
             <TextInput
               style={[styles.input, { fontSize: s(22), paddingVertical: s(18), paddingHorizontal: s(16), textAlign: 'center', letterSpacing: s(2) }]}
-              placeholder="Enter 6 digit code"
+               placeholder="Enter 8 digit code"
               placeholderTextColor={PLACEHOLDER}
               value={code}
               keyboardType="number-pad"
               inputMode="numeric"
-              maxLength={6}
-              onChangeText={setCode}
+               maxLength={8}
+               onChangeText={(value) => setCode(value.replace(/\D/g, ''))}
             />
             <Button
               title="Continue"
               onPress={() => navigation.navigate('PatientHome', { code })}
-              disabled={code.length !== 6}
+               disabled={code.length !== 8}
               style={{ marginTop: height * 0.02 }}
             />
           </Animated.View>
