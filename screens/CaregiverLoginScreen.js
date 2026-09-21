@@ -8,6 +8,7 @@ import {
   Platform,
   useWindowDimensions,
   TouchableOpacity,
+  ScrollView,
 } from 'react-native';
 import styles from './CaregiverLoginScreen.styles';
 import { PLACEHOLDER, WHITE } from '../theme/colors';
@@ -60,9 +61,9 @@ export default function CaregiverLoginScreen({ navigation }) {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.centerContent}>
+      <ScrollView contentContainerStyle={[styles.centerContent, { flexGrow: 1 }]} keyboardShouldPersistTaps="handled">
         <Image
           source={require('../assets/logo.png')}
           style={[styles.logo, { width: s(70), height: s(70), marginBottom: height * 0.02 }]}
@@ -133,7 +134,7 @@ export default function CaregiverLoginScreen({ navigation }) {
         <Text style={[styles.backLink, { fontSize: s(14) }]} onPress={() => navigation.goBack()}>
           ← Back
         </Text>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }

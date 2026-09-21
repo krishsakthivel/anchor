@@ -9,6 +9,7 @@ import {
   useWindowDimensions,
   Animated,
   TouchableOpacity,
+  ScrollView,
 } from 'react-native';
 import styles from './LandingScreen.styles';
 import { PLACEHOLDER } from '../theme/colors';
@@ -55,9 +56,9 @@ export default function LandingScreen({ navigation }) {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.centerContent}>
+      <ScrollView contentContainerStyle={[styles.centerContent, { flexGrow: 1 }]} keyboardShouldPersistTaps="handled">
         <Animated.View style={[styles.hero, { opacity: heroFade }]}>
           <Image
             source={require('../assets/logo.png')}
@@ -97,7 +98,7 @@ export default function LandingScreen({ navigation }) {
             />
           </Animated.View>
         </View>
-      </View>
+      </ScrollView>
 
       <Animated.View style={[styles.footer, { marginBottom: height * 0.05, opacity: footerFade }]}>
         <Text style={[styles.footerText, { fontSize: s(15) }]}>
