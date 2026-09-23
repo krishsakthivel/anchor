@@ -14,10 +14,6 @@ import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
 import { NAVY, WHITE, PLACEHOLDER, MUTED, SURFACE, DANGER } from '../theme/colors';
 
-// A deliberately small, large-print profile screen for patients: two fields,
-// two buttons, nothing else. Caregiver-facing settings (schedules, phone
-// numbers for other people, etc.) live only in the caregiver's own Profile
-// screen and should never surface here.
 export default function PatientProfileScreen({ navigation }) {
   const { width } = useWindowDimensions();
   const [fullName, setFullName] = useState('');
@@ -88,9 +84,6 @@ export default function PatientProfileScreen({ navigation }) {
         setSignOutError(error.message || 'Could not sign out. Please try again.');
         return;
       }
-      // Explicit reset: the navigator's initialRouteName only applies on
-      // first mount, so an auth-state change alone won't move us off this
-      // screen.
       navigation.reset({ index: 0, routes: [{ name: 'Landing' }] });
     } catch (err) {
       console.error('handleConfirmSignOut failed', err);

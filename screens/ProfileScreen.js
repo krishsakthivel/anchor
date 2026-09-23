@@ -11,8 +11,6 @@ import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
 import { NAVY, WHITE, PLACEHOLDER, MUTED, DANGER } from '../theme/colors';
 
-// Caregiver-only profile screen. Patients use the separate, simplified
-// PatientProfileScreen instead — do not reuse this one for patients.
 export default function ProfileScreen({ navigation }) {
   const { width } = useWindowDimensions();
   const [fullName, setFullName] = useState('');
@@ -97,8 +95,6 @@ export default function ProfileScreen({ navigation }) {
       Alert.alert('Error', 'Could not sign out. Please try again.');
       return;
     }
-    // Explicit reset: the navigator's initialRouteName only applies on first
-    // mount, so an auth-state change alone won't move us off this screen.
     navigation.reset({ index: 0, routes: [{ name: 'Landing' }] });
   };
 

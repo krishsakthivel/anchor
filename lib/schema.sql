@@ -15,8 +15,6 @@ CREATE TABLE pairing_codes (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Failed code attempts are written only by the SECURITY DEFINER claim
--- function. There are intentionally no client-facing policies on this table.
 CREATE TABLE pairing_attempts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -216,9 +214,6 @@ ALTER TABLE vital_signs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mood_logs ENABLE ROW LEVEL SECURITY;
 
--- Centralized access checks keep every child table tied to the same patient
--- ownership/sharing rules. SECURITY DEFINER lets these helpers inspect the
--- ownership rows without being blocked by the caller's RLS policies.
 CREATE OR REPLACE FUNCTION is_patient_owner(p_patient_id UUID)
 RETURNS BOOLEAN
 LANGUAGE SQL
@@ -581,9 +576,6 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
 
--- Patients pair through this function instead of reading pairing_codes directly.
--- SECURITY DEFINER is required because the anonymous patient session cannot update
--- the caregiver-owned patients/pairing_codes rows under normal RLS policies.
 CREATE OR REPLACE FUNCTION claim_patient_code(p_code TEXT)
 RETURNS patients
 LANGUAGE plpgsql
@@ -682,9 +674,6 @@ BEGIN
 END;
 $$;
 
--- Lets the owning caregiver issue a fresh code when a patient signs out,
--- reinstalls the app, or moves to a new phone. The old pairing is revoked in
--- the same transaction so two patient sessions cannot remain active.
 CREATE OR REPLACE FUNCTION reset_patient_pairing(p_patient_id UUID, p_code TEXT)
 RETURNS pairing_codes
 LANGUAGE plpgsql

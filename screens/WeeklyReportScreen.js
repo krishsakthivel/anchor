@@ -137,8 +137,6 @@ export default function WeeklyReportScreen({ route }) {
   const medRate = report.totalMedSlots > 0 ? Math.round((report.medTaken / report.totalMedSlots) * 100) : 0;
   const taskRate = report.totalTaskSlots > 0 ? Math.round((report.taskDone / report.totalTaskSlots) * 100) : 0;
 
-  // Buckets the weekly average onto the shared 1-5 mood scale
-  // (1=🤒 … 5=😊, same as PatientHomeScreen).
   const getMoodEmoji = (avg) => {
     if (avg >= 4.5) return '😊';
     if (avg >= 3.5) return '😐';

@@ -60,8 +60,6 @@ export default function AppointmentsScreen({ route }) {
     if (!title.trim() || !date.trim() || !time.trim()) return;
     setLoading(true);
 
-    // Free-text fields: validate before building a Date, because an invalid
-    // input makes toISOString() throw and crash the handler.
     const dateStr = date.trim();
     const timeStr = time.trim();
     const parsed = new Date(`${dateStr}T${timeStr}:00`);

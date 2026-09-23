@@ -35,9 +35,6 @@ const linking = {
 export default function RootNavigator() {
   const [initialRoute, setInitialRoute] = React.useState(null);
   const [initialPatientId, setInitialPatientId] = React.useState(null);
-  // Ref mirror of initialRoute: the auth-state subscription closes over the
-  // first render's state, so reading the state variable inside its callback
-  // would always see null.
   const initialRouteRef = React.useRef(null);
   const [fontsLoaded] = useFonts({
     DMSans_400Regular,
@@ -52,8 +49,6 @@ export default function RootNavigator() {
       if (!session) {
         route = 'Landing';
       } else if (session.user?.is_anonymous) {
-        // Patients authenticate anonymously (no email/password), so an
-        // anonymous session means this is a patient, not a caregiver.
         const { data: patientRow } = await supabase
           .from('patients')
           .select('id')

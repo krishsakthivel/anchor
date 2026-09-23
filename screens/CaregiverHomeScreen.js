@@ -51,10 +51,6 @@ const getInitials = (name) => {
   return (first + last).toUpperCase();
 };
 
-// Fetches the "at a glance" summary for every patient in one batch: 6 queries
-// total regardless of how many patients there are (instead of 6 per patient,
-// which was serializing on slower connections and making the whole screen
-// feel slow to load after sign-in).
 async function getPatientSummaries(patientIds) {
   const empty = {};
   if (!patientIds.length) return empty;
@@ -106,8 +102,6 @@ async function getPatientSummaries(patientIds) {
       patientTasks.filter((t) => !t.days || t.days.includes(today)).map((t) => t.id)
     );
 
-    // Only successful statuses count toward the routine — 'skipped'/'missed'
-    // logs must not fill the progress bar.
     const medsDone = new Set(
       patientMedLogs.filter((l) => l.status === 'taken').map((l) => l.schedule_id || l.medication_id)
     );
@@ -124,8 +118,6 @@ async function getPatientSummaries(patientIds) {
       (m) => m.total_pills && m.pills_remaining !== null && m.pills_remaining <= (m.refill_alert_at || 10)
     ).length;
 
-    // moodLogs is already sorted newest-first across all patients, so the
-    // first match per patient is today's latest entry.
     const moodToday = moodLogs.find((l) => l.patient_id === patientId)?.mood || null;
 
     summaries[patientId] = { routineTotal, routineDone, lowStockCount, moodToday };
@@ -146,7 +138,7 @@ export default function CaregiverHomeScreen({ navigation }) {
   const [newPatientPhone, setNewPatientPhone] = useState('');
   const [addLoading, setAddLoading] = useState(false);
 
-  const [successCode, setSuccessCode] = useState(null); // { name, code }
+  const [successCode, setSuccessCode] = useState(null);
 
   const { width } = useWindowDimensions();
 
@@ -191,8 +183,6 @@ export default function CaregiverHomeScreen({ navigation }) {
         ...patient,
         permissionLevel: patient.created_by === user.id ? 'owner' : (permissionByPatient.get(patient.id) || 'viewer'),
       }));
-      // Show the list immediately with placeholder summaries so the screen
-      // isn't blocked waiting on the heavier per-patient stats.
       setPatients(base.map((patient) => ({
         ...patient,
         routineTotal: 0,
@@ -209,7 +199,6 @@ export default function CaregiverHomeScreen({ navigation }) {
         })));
       } catch (summaryErr) {
         console.error('getPatientSummaries failed', summaryErr);
-        // Leave the placeholder list in place rather than losing the patients.
       }
     } catch (err) {
       console.error('fetchPatients failed', err);
@@ -296,8 +285,6 @@ export default function CaregiverHomeScreen({ navigation }) {
         }
       }
 
-      // Show the new patient immediately, regardless of how the follow-up
-      // summary refresh below goes.
       setPatients((prev) => [
         { ...patient, routineTotal: 0, routineDone: 0, lowStockCount: 0, moodToday: null },
         ...prev,
@@ -394,9 +381,6 @@ export default function CaregiverHomeScreen({ navigation }) {
             Alert.alert('Error', 'Could not sign out. Please try again.');
             return;
           }
-          // Explicit reset: the navigator's initialRouteName only applies on
-          // first mount, so an auth-state change alone won't move us off
-          // this screen.
           navigation.reset({ index: 0, routes: [{ name: 'Landing' }] });
         },
       },
@@ -600,7 +584,6 @@ export default function CaregiverHomeScreen({ navigation }) {
         }
       />
 
-      {/* Add patient modal */}
       <Modal visible={addModalVisible} animationType="slide" transparent>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={styles.modalOverlay}>
@@ -656,7 +639,6 @@ export default function CaregiverHomeScreen({ navigation }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Pairing code success modal */}
       <Modal visible={!!successCode} animationType="fade" transparent>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { borderRadius: 10, padding: s(24), alignItems: 'center' }]}>
