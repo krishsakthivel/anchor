@@ -1,6 +1,3 @@
--- Apply this migration to existing Supabase projects so patients can undo a
--- medication or task check-in that they just recorded.
-
 DROP POLICY IF EXISTS "Patients undo own medication logs" ON medication_log;
 CREATE POLICY "Patients undo own medication logs"
   ON medication_log FOR DELETE

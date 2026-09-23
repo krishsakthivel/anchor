@@ -14,8 +14,6 @@ import useCustomFonts from '../lib/useCustomFonts';
 import Button from '../components/Button';
 import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
 
-// Value→emoji mapping must match PatientHomeScreen/CaregiverHomeScreen so a
-// logged mood reads the same everywhere.
 const MOODS = [
   { value: 1, emoji: '🤒', label: 'Very Bad' },
   { value: 2, emoji: '😢', label: 'Bad' },

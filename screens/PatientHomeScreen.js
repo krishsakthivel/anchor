@@ -89,9 +89,6 @@ export default function PatientHomeScreen({ route, navigation }) {
       let { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError) throw userError;
 
-    // Patients don't have a traditional account — they just enter a code.
-    // Give them a lightweight anonymous session so the app has an auth.uid()
-    // to attach their data to and to satisfy row-level security policies.
       if (!user) {
         const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
         if (anonError || !anonData?.user) {
@@ -130,9 +127,6 @@ export default function PatientHomeScreen({ route, navigation }) {
         }
 
         patientData = claimed;
-        // The code is a one-time credential. Replace it with the resolved
-        // patient id so refreshes and logging actions never try to claim it a
-        // second time.
         setClaimedPatientId(claimed.id);
         navigation.setParams({ patientId: claimed.id, code: undefined });
       }
@@ -144,8 +138,6 @@ export default function PatientHomeScreen({ route, navigation }) {
       if (schedulesError) throw schedulesError;
       const { data: meds, error: medsError } = await supabase.from('medications').select('*').eq('patient_id', patientData.id);
       if (medsError) throw medsError;
-    // Meds with no schedule row (caregiver didn't set a time) have no daily
-    // restriction — treat them as due every day so they never go missing.
     const todayMeds = [];
     (meds || []).forEach((med) => {
       const medSchedules = (schedules || []).filter((schedule) => schedule.medication_id === med.id);
@@ -479,7 +471,6 @@ export default function PatientHomeScreen({ route, navigation }) {
             <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: MUTED, marginLeft: s(8) }}>Today</Text>
           </View>
 
-          {/* The patient home stays focused on today's routine. */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: s(24) }}>
             <View style={{ flex: 1 }}>
               <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(17), color: MUTED }}>Good {greeting}</Text>
@@ -673,8 +664,6 @@ export default function PatientHomeScreen({ route, navigation }) {
                   ))}
                 </View>
                 {vitalType && (
-                  // 'default' keyboard on purpose: entries like "120/80" can't be
-                  // typed on a decimal pad.
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(18), color: NAVY, marginBottom: s(16) }} placeholder="Value" placeholderTextColor={PLACEHOLDER} value={vitalValue} onChangeText={setVitalValue} keyboardType="default" />
                 )}
                 <Button title={vitalLoading ? 'Logging...' : 'Log'} onPress={handleLogVital} disabled={!vitalType || !vitalValue.trim() || vitalLoading} loading={vitalLoading} style={{ borderRadius: 8, marginBottom: s(8) }} />
