@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
+import { scheduleCaregiverMedicationReminders } from '../lib/notifications';
 import {
   NAVY,
   WHITE,
@@ -183,6 +184,18 @@ export default function CaregiverHomeScreen({ navigation }) {
         ...patient,
         permissionLevel: patient.created_by === user.id ? 'owner' : (permissionByPatient.get(patient.id) || 'viewer'),
       }));
+      const patientIds = base.map((patient) => patient.id);
+      const [{ data: medicationRows }, { data: scheduleRows }] = await Promise.all([
+        supabase.from('medications').select('id, patient_id, name').in('patient_id', patientIds),
+        supabase.from('medication_schedule').select('medication_id, patient_id, time, days').in('patient_id', patientIds).eq('active', true),
+      ]);
+      const patientNames = new Map(base.map((patient) => [patient.id, patient.name]));
+      const medicationNames = new Map((medicationRows || []).map((medication) => [medication.id, medication.name]));
+      const today = DAYS[new Date().getDay()];
+      scheduleCaregiverMedicationReminders((scheduleRows || [])
+        .filter((schedule) => Array.isArray(schedule.days) ? schedule.days.includes(today) : String(schedule.days || '').includes(today))
+        .map((schedule) => ({ patientId: schedule.patient_id, patientName: patientNames.get(schedule.patient_id) || 'Your patient', medicationName: medicationNames.get(schedule.medication_id) || 'medicine', time: String(schedule.time).slice(0, 5) })))
+        .catch(() => {});
       setPatients(base.map((patient) => ({
         ...patient,
         routineTotal: 0,

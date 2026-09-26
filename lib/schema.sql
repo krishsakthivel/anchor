@@ -37,7 +37,7 @@ CREATE TABLE caregiver_patient (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   caregiver_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
-  permission_level TEXT NOT NULL DEFAULT 'owner' CHECK (permission_level IN ('owner', 'editor', 'viewer')),
+  permission_level TEXT NOT NULL DEFAULT 'owner' CHECK (permission_level IN ('owner', 'editor', 'viewer', 'family')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(caregiver_id, patient_id)
 );
@@ -195,6 +195,18 @@ CREATE TABLE mood_logs (
   logged_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE daily_plans (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  patient_id UUID REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+  plan_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  answers JSONB NOT NULL DEFAULT '{}'::jsonb,
+  blocks JSONB NOT NULL DEFAULT '[]'::jsonb,
+  overridden_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (patient_id, plan_date)
+);
+
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pairing_codes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pairing_attempts ENABLE ROW LEVEL SECURITY;
@@ -213,6 +225,7 @@ ALTER TABLE care_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE vital_signs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mood_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE daily_plans ENABLE ROW LEVEL SECURITY;
 
 CREATE OR REPLACE FUNCTION is_patient_owner(p_patient_id UUID)
 RETURNS BOOLEAN
@@ -246,7 +259,7 @@ AS $$
           WHERE cp.patient_id = p.id
             AND cp.caregiver_id = auth.uid()
             AND (
-              p_required = 'viewer'
+              (p_required = 'viewer' AND cp.permission_level IN ('owner', 'editor', 'viewer'))
               OR (p_required = 'editor' AND cp.permission_level IN ('owner', 'editor'))
               OR (p_required = 'owner' AND cp.permission_level = 'owner')
             )
@@ -555,6 +568,69 @@ CREATE POLICY "Patients read own mood"
       SELECT id FROM patients WHERE paired_user_id = auth.uid()
     )
   );
+
+CREATE POLICY "Patients manage own daily plans"
+  ON daily_plans FOR ALL
+  USING (
+    patient_id IN (
+      SELECT id FROM patients WHERE paired_user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    patient_id IN (
+      SELECT id FROM patients WHERE paired_user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Caregivers read daily plans"
+  ON daily_plans FOR SELECT
+  USING (has_patient_access(patient_id, 'viewer'));
+
+CREATE POLICY "Caregivers update daily plans"
+  ON daily_plans FOR UPDATE
+  USING (has_patient_access(patient_id, 'editor'))
+  WITH CHECK (has_patient_access(patient_id, 'editor'));
+
+CREATE OR REPLACE FUNCTION family_status()
+RETURNS TABLE (patient_id UUID, patient_name TEXT, medication_status TEXT, care_status TEXT)
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  WITH family_patients AS (
+    SELECT p.id, p.name
+    FROM patients p
+    JOIN caregiver_patient cp ON cp.patient_id = p.id
+    WHERE cp.caregiver_id = auth.uid() AND cp.permission_level = 'family'
+  ), today_logs AS (
+    SELECT ml.patient_id,
+      COUNT(*) FILTER (WHERE ml.status = 'taken') AS taken,
+      COUNT(*) FILTER (WHERE ml.status = 'missed') AS missed
+    FROM medication_log ml
+    WHERE ml.log_day = CURRENT_DATE
+    GROUP BY ml.patient_id
+  ), today_moods AS (
+    SELECT DISTINCT ON (patient_id) patient_id, mood
+    FROM mood_logs
+    WHERE logged_at >= date_trunc('day', NOW())
+    ORDER BY patient_id, logged_at DESC
+  )
+  SELECT fp.id,
+    fp.name,
+    CASE
+      WHEN COALESCE(tl.missed, 0) > 0 THEN 'Medication missed'
+      WHEN COALESCE(tl.taken, 0) > 0 THEN 'Medication checked'
+      ELSE 'No medication update yet'
+    END,
+    CASE WHEN tm.mood <= 2 THEN 'Needs extra care' ELSE 'Doing okay' END
+  FROM family_patients fp
+  LEFT JOIN today_logs tl ON tl.patient_id = fp.id
+  LEFT JOIN today_moods tm ON tm.patient_id = fp.id;
+$$;
+
+REVOKE ALL ON FUNCTION family_status() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION family_status() TO authenticated;
 
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$

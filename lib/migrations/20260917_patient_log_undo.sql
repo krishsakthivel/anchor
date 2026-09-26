@@ -1,3 +1,4 @@
+
 DROP POLICY IF EXISTS "Patients undo own medication logs" ON medication_log;
 CREATE POLICY "Patients undo own medication logs"
   ON medication_log FOR DELETE

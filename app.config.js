@@ -28,10 +28,13 @@ export default {
     web: {
       favicon: './assets/favicon.png',
     },
-    plugins: ['expo-font'],
+    plugins: ['expo-font', 'expo-notifications'],
     extra: {
       supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
       supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+      eas: {
+        projectId: '30c4351d-76b3-47e4-a480-8e94b461dfea',
+      },
     },
   },
 };

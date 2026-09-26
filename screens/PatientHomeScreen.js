@@ -5,6 +5,8 @@ import { supabase } from '../lib/supabase';
 const { getRoutineStatus } = require('../lib/routineStatus');
 import { NAVY, WHITE, PLACEHOLDER, MUTED, SURFACE, BORDER, SUCCESS, SUCCESS_BG, WARNING, WARNING_BG, DANGER } from '../theme/colors';
 import Button from '../components/Button';
+import { schedulePatientMedicationReminders, schedulePlanReminders } from '../lib/notifications';
+import { buildDailyPlan, displayTime, planLabels } from '../lib/dailyPlan';
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const MOODS = [
@@ -60,6 +62,10 @@ export default function PatientHomeScreen({ route, navigation }) {
   const [vitalValue, setVitalValue] = useState('');
   const [vitalLoading, setVitalLoading] = useState(false);
   const [vitalError, setVitalError] = useState('');
+  const [dailyPlan, setDailyPlan] = useState(null);
+  const [planVisible, setPlanVisible] = useState(false);
+  const [planAnswers, setPlanAnswers] = useState({ sleep: '', feeling: '', energy: '', play: '', needsCare: '' });
+  const [planSaving, setPlanSaving] = useState(false);
 
   const [fetchError, setFetchError] = useState('');
   const [loadingInitial, setLoadingInitial] = useState(true);
@@ -156,6 +162,7 @@ export default function PatientHomeScreen({ route, navigation }) {
       }
     });
       setMedications(todayMeds);
+      schedulePatientMedicationReminders(todayMeds).catch(() => {});
 
       const { data: taskData, error: tasksError } = await supabase.from('tasks').select('*').eq('patient_id', patientData.id).eq('active', true);
       if (tasksError) throw tasksError;
@@ -184,6 +191,10 @@ export default function PatientHomeScreen({ route, navigation }) {
       const { data: todayMood, error: moodError } = await supabase.from('mood_logs').select('*').eq('patient_id', patientData.id).gte('logged_at', todayStart.toISOString()).order('logged_at', { ascending: false }).limit(1);
       if (moodError) throw moodError;
       setMoodToday(todayMood?.[0] || null);
+
+      const planDate = new Date().toISOString().slice(0, 10);
+      const { data: plan } = await supabase.from('daily_plans').select('*').eq('patient_id', patientData.id).eq('plan_date', planDate).maybeSingle();
+      setDailyPlan(plan || null);
     } catch (err) {
       console.error('PatientHome fetch failed', err);
       setFetchError('Could not load your care plan. Please try again.');
@@ -324,6 +335,26 @@ export default function PatientHomeScreen({ route, navigation }) {
     } finally {
       setMoodLoading(false);
     }
+  };
+
+  const saveDailyPlan = async () => {
+    if (Object.values(planAnswers).some((answer) => !answer) || !patient || planSaving) return;
+    setPlanSaving(true);
+    const blocks = buildDailyPlan(planAnswers, medications);
+    const planDate = new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabase
+      .from('daily_plans')
+      .upsert({ patient_id: patient.id, plan_date: planDate, answers: planAnswers, blocks }, { onConflict: 'patient_id,plan_date' })
+      .select()
+      .single();
+    setPlanSaving(false);
+    if (error) {
+      Alert.alert('Could not build today’s schedule', 'Please try again.');
+      return;
+    }
+    setDailyPlan(data);
+    schedulePlanReminders(blocks).catch(() => {});
+    setPlanVisible(false);
   };
 
   const handleLogVital = async () => {
@@ -492,6 +523,18 @@ export default function PatientHomeScreen({ route, navigation }) {
             </View>
           )}
 
+          <TouchableOpacity
+            onPress={() => setPlanVisible(true)}
+            style={{ backgroundColor: dailyPlan ? SUCCESS_BG : '#F0F4FF', padding: s(18), borderRadius: 14, marginBottom: s(18), flexDirection: 'row', alignItems: 'center' }}
+          >
+            <Ionicons name={dailyPlan ? 'calendar' : 'sparkles-outline'} size={s(28)} color={NAVY} style={{ marginRight: s(12) }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{dailyPlan ? 'Your schedule is ready' : 'Build today’s schedule'}</Text>
+              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{dailyPlan ? `${dailyPlan.blocks?.length || 0} gentle plans for today` : 'Answer five quick questions'}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={s(22)} color={NAVY} />
+          </TouchableOpacity>
+
           {routineItems.length > 0 && (
             <View style={{ marginBottom: s(24) }}>
               <View style={{ backgroundColor: nextRoutineItem ? WARNING_BG : SUCCESS_BG, padding: s(18), borderRadius: 14, marginBottom: s(18) }}>
@@ -501,7 +544,7 @@ export default function PatientHomeScreen({ route, navigation }) {
                 <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(21), color: NAVY }}>
                   {nextRoutineItem ? nextRoutineItem.title : 'You are all done for now'}
                 </Text>
-                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(4) }}>
+                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(17), color: MUTED, marginTop: s(4) }}>
                   {nextRoutineItem
                     ? [nextRoutineItem.detail, formatScheduleTime(nextRoutineItem.time)].filter(Boolean).join(' · ')
                     : 'Your caregiver can see that today’s routine is complete.'}
@@ -543,7 +586,7 @@ export default function PatientHomeScreen({ route, navigation }) {
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{item.title}</Text>
                     {!!item.detail && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{item.detail}</Text>}
-                    <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: item.complete ? SUCCESS : item.handled ? WARNING : MUTED, marginTop: s(3) }}>
+                    <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: item.complete ? SUCCESS : item.handled ? WARNING : MUTED, marginTop: s(3) }}>
                       {item.label}
                     </Text>
                   </View>
@@ -582,11 +625,11 @@ export default function PatientHomeScreen({ route, navigation }) {
           <View style={{ flexDirection: 'row', marginBottom: s(24) }}>
             <TouchableOpacity onPress={() => { setVitalError(''); setVitalsVisible(true); }} style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 12, padding: s(14), marginRight: s(6), minHeight: s(76) }}>
               <Ionicons name="pulse-outline" size={s(22)} color={NAVY} />
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginTop: s(5) }}>Log a vital</Text>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginTop: s(5) }}>Log a vital</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => navigation.navigate('PatientProfile')} style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 12, padding: s(14), marginLeft: s(6), minHeight: s(76) }}>
               <Ionicons name="person-outline" size={s(22)} color={NAVY} />
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginTop: s(5) }}>My profile</Text>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginTop: s(5) }}>My profile</Text>
             </TouchableOpacity>
           </View>
 
@@ -642,6 +685,32 @@ export default function PatientHomeScreen({ route, navigation }) {
                 <Button title={moodLoading ? 'Logging...' : 'Log Mood'} onPress={handleLogMood} disabled={!selectedMood || moodLoading} loading={moodLoading} style={{ borderRadius: 8, marginBottom: s(8) }} />
                 <Button title="Cancel" onPress={() => { if (moodLoading) return; setMoodVisible(false); setSelectedMood(null); setMoodNote(''); setMoodError(''); }} style={{ backgroundColor: MUTED, borderRadius: 8 }} />
               </View>
+              </View>
+            </KeyboardAvoidingView>
+          </Modal>
+
+          <Modal visible={planVisible} animationType="slide" transparent>
+            <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(15,44,107,0.45)' }}>
+                <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(22), width: '90%', maxHeight: '86%' }}>
+                  <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(21), color: NAVY, marginBottom: s(5) }}>{dailyPlan ? 'Today’s schedule' : 'A quick morning check-in'}</Text>
+                  <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: MUTED, marginBottom: s(16) }}>{dailyPlan ? 'Your caregiver can view this schedule too.' : 'There are no wrong answers.'}</Text>
+                  {dailyPlan ? (
+                    <FlatList
+                      data={dailyPlan.blocks || []}
+                      keyExtractor={(item, index) => `${item.start}-${index}`}
+                      renderItem={({ item }) => <View style={{ flexDirection: 'row', paddingVertical: s(10), borderBottomWidth: 1, borderBottomColor: BORDER }}><Text style={{ width: s(72), fontFamily: 'DMSans_700Bold', fontSize: s(13), color: NAVY }}>{displayTime(item.start)}</Text><View style={{ flex: 1 }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>{item.title || planLabels[item.type]}</Text><Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: MUTED }}>{item.minutes} minutes</Text></View></View>}
+                      style={{ maxHeight: s(360) }}
+                    />
+                  ) : (
+                    <>
+                      {[['sleep', 'How was your sleep?', ['Very bad', 'Okay', 'Good']], ['feeling', 'How are you feeling?', ['Not well', 'Okay', 'Good']], ['energy', 'How much energy do you have?', ['Low', 'Some', 'A lot']]].map(([key, question, options]) => <View key={key} style={{ marginBottom: s(13) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY, marginBottom: s(7) }}>{question}</Text><View style={{ flexDirection: 'row' }}>{options.map((option, index) => <TouchableOpacity key={option} onPress={() => setPlanAnswers((current) => ({ ...current, [key]: String(index + 1) }))} style={{ flex: 1, minHeight: s(48), backgroundColor: planAnswers[key] === String(index + 1) ? NAVY : SURFACE, borderRadius: 8, padding: s(9), marginRight: index < 2 ? s(6) : 0, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: planAnswers[key] === String(index + 1) ? WHITE : NAVY, textAlign: 'center' }}>{option}</Text></TouchableOpacity>)}</View></View>)}
+                      {[['play', 'Would you like play time?'], ['needsCare', 'Would you like extra care time?']].map(([key, question]) => <View key={key} style={{ marginBottom: s(13) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY, marginBottom: s(7) }}>{question}</Text><View style={{ flexDirection: 'row' }}>{['yes', 'no'].map((answer) => <TouchableOpacity key={answer} onPress={() => setPlanAnswers((current) => ({ ...current, [key]: answer }))} style={{ flex: 1, minHeight: s(50), backgroundColor: planAnswers[key] === answer ? NAVY : SURFACE, borderRadius: 8, padding: s(10), marginRight: answer === 'yes' ? s(8) : 0, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(16), color: planAnswers[key] === answer ? WHITE : NAVY }}>{answer === 'yes' ? 'Yes' : 'No'}</Text></TouchableOpacity>)}</View></View>)}
+                    </>
+                  )}
+                  <Button title={dailyPlan ? 'Close' : (planSaving ? 'Building...' : 'Build my schedule')} onPress={dailyPlan ? () => setPlanVisible(false) : saveDailyPlan} disabled={!dailyPlan && (Object.values(planAnswers).some((answer) => !answer) || planSaving)} loading={!dailyPlan && planSaving} style={{ marginTop: s(8), marginBottom: s(8) }} />
+                  {!dailyPlan && <Button title="Cancel" onPress={() => setPlanVisible(false)} style={{ backgroundColor: MUTED }} />}
+                </View>
               </View>
             </KeyboardAvoidingView>
           </Modal>

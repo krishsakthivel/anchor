@@ -27,8 +27,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
-    minHeight: 48,
+    paddingVertical: 16,
+    minHeight: 54,
     alignSelf: 'stretch',
   },
   disabled: {
@@ -37,6 +37,6 @@ const styles = StyleSheet.create({
   text: {
     fontFamily: 'DMSans_700Bold',
     color: WHITE,
-    fontSize: 16,
+    fontSize: 17,
   },
 });

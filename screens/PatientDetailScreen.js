@@ -16,9 +16,10 @@ import {
 import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
 import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
+import { displayTime, planLabels } from '../lib/dailyPlan';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-const TABS = ['Medications', 'Tasks', 'Notes', 'Vitals', 'Appointments', 'Mood', 'Report'];
+const TABS = ['Medications', 'Tasks', 'Schedule', 'Notes', 'Vitals', 'Appointments', 'Mood', 'Report'];
 const REPORT_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 export default function PatientDetailScreen({ route, navigation }) {
@@ -325,6 +326,9 @@ export default function PatientDetailScreen({ route, navigation }) {
       case 'Notes':
         return <CareNotesTab patientId={patientId} canEdit={canEdit} />;
 
+      case 'Schedule':
+        return <DailyScheduleTab patientId={patientId} canEdit={canEdit} />;
+
       case 'Vitals':
         return <VitalsTab patientId={patientId} />;
 
@@ -436,6 +440,55 @@ export default function PatientDetailScreen({ route, navigation }) {
         }
       />
     </View>
+  );
+}
+
+function DailyScheduleTab({ patientId, canEdit }) {
+  const { width } = useWindowDimensions();
+  const s = (size) => Math.round(size * (width / 375));
+  const [plan, setPlan] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const fetchPlan = async () => {
+    const { data } = await supabase.from('daily_plans').select('*').eq('patient_id', patientId).eq('plan_date', today).maybeSingle();
+    setPlan(data || null);
+  };
+
+  useEffect(() => { fetchPlan(); }, [patientId]);
+
+  const adjustBlock = async (index, amount) => {
+    if (!plan || saving) return;
+    const blocks = plan.blocks.map((block, blockIndex) => blockIndex === index ? { ...block, minutes: Math.max(0, Number(block.minutes || 0) + amount) } : block);
+    setSaving(true);
+    const { data, error } = await supabase
+      .from('daily_plans')
+      .update({ blocks, overridden_by: (await supabase.auth.getUser()).data.user?.id || null, updated_at: new Date().toISOString() })
+      .eq('id', plan.id)
+      .select()
+      .single();
+    setSaving(false);
+    if (error) {
+      Alert.alert('Could not update schedule', 'Please try again.');
+      return;
+    }
+    setPlan(data);
+  };
+
+  if (!plan) return <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>The patient has not completed today’s check-in yet.</Text>;
+
+  return (
+    <>
+      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginBottom: s(5) }}>Today’s schedule</Text>
+      <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666', marginBottom: s(12) }}>{plan.overridden_by ? 'Adjusted by caregiver' : 'Built from the morning check-in'}</Text>
+      {(plan.blocks || []).map((block, index) => (
+        <View key={`${block.start}-${index}`} style={{ backgroundColor: '#F0F4FF', borderRadius: 10, padding: s(12), marginBottom: s(8), flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={{ width: s(66), fontFamily: 'DMSans_700Bold', fontSize: s(12), color: NAVY }}>{displayTime(block.start)}</Text>
+          <View style={{ flex: 1 }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>{block.title || planLabels[block.type]}</Text><Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666' }}>{block.minutes} minutes</Text></View>
+          {canEdit && <View style={{ flexDirection: 'row' }}><TouchableOpacity disabled={saving} onPress={() => adjustBlock(index, -15)} style={{ padding: s(8) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY }}>−</Text></TouchableOpacity><TouchableOpacity disabled={saving} onPress={() => adjustBlock(index, 15)} style={{ padding: s(8) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY }}>+</Text></TouchableOpacity></View>}
+        </View>
+      ))}
+    </>
   );
 }
 

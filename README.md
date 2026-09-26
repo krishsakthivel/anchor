@@ -6,7 +6,7 @@ Anchor is an Expo phone app for shared caregiving: caregivers create care plans,
 
 1. Copy `.env.example` to `.env` and fill in the Supabase project URL and anon key.
 2. In Supabase SQL Editor, run `lib/schema.sql` for a new project. It contains the tables, RLS policies, and pairing functions the app needs.
-   For an existing project created before patient undo support, also run `lib/migrations/20260917_patient_log_undo.sql` once.
+   For an existing project, also run `lib/migrations/20260917_patient_log_undo.sql` and `lib/migrations/20260922_daily_plans.sql` once.
 3. Install and start the app:
 
    ```bash
@@ -15,6 +15,10 @@ Anchor is an Expo phone app for shared caregiving: caregivers create care plans,
    ```
 
 The displayed QR code opens the project in Expo Go. For a web preview, use `npx expo start --web`.
+
+## Reminders
+
+Open the app once on each device and allow notifications. Patient medication reminders arrive 15 minutes before scheduled medication. Caregiver medication reminders arrive one hour before scheduled medication. Daily activity reminders arrive five minutes before a scheduled activity.
 
 ## Important setup
 
