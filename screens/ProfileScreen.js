@@ -8,6 +8,7 @@ import {
   Alert,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+import * as Crypto from 'expo-crypto';
 import Button from '../components/Button';
 import { NAVY, WHITE, PLACEHOLDER, MUTED, DANGER } from '../theme/colors';
 
@@ -18,6 +19,7 @@ export default function ProfileScreen({ navigation }) {
   const [caregiverPhone, setCaregiverPhone] = useState('');
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
+  const [patients, setPatients] = useState([]);
 
   const scale = width / 375;
   const s = (size) => Math.round(size * scale);
@@ -46,6 +48,9 @@ export default function ProfileScreen({ navigation }) {
       .single();
 
     if (cp) setCaregiverPhone(cp.phone || '');
+
+    const { data: patientRows } = await supabase.from('patients').select('id, name').eq('created_by', user.id).order('name');
+    setPatients(patientRows || []);
   };
 
   useEffect(() => { fetchData(); }, []);
@@ -106,6 +111,18 @@ export default function ProfileScreen({ navigation }) {
     }
   };
 
+  const makeFamilyCode = async (patient) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const code = Array.from(Crypto.getRandomValues(new Uint32Array(8)), (value) => String(value % 10)).join('');
+    const { error } = await supabase.from('family_codes').insert({ patient_id: patient.id, caregiver_id: user.id, code });
+    if (error) {
+      Alert.alert('Could not make a code', 'Please try again.');
+      return;
+    }
+    Alert.alert(`Family code for ${patient.name}`, `${code}\n\nHave them sign in, then enter this code. It expires in 7 days.`);
+  };
+
   return (
     <ScrollView style={{ flex: 1, backgroundColor: WHITE }}>
       <View style={{ padding: s(20) }}>
@@ -149,6 +166,10 @@ export default function ProfileScreen({ navigation }) {
           loading={loading}
           style={{ marginBottom: s(12) }}
         />
+
+        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginTop: s(16), marginBottom: s(6) }}>Family access</Text>
+        <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: MUTED, marginBottom: s(10) }}>Family only sees medication status and important care updates.</Text>
+        {patients.map((patient) => <Button key={patient.id} title={`Make code for ${patient.name}`} onPress={() => makeFamilyCode(patient)} style={{ backgroundColor: '#343434', marginBottom: s(8) }} />)}
 
         <Button
           title="Sign Out"
