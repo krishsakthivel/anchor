@@ -7,6 +7,7 @@ import { NAVY, WHITE, PLACEHOLDER, MUTED, SURFACE, BORDER, SUCCESS, SUCCESS_BG, 
 import Button from '../components/Button';
 import { schedulePatientMedicationReminders, schedulePlanReminders } from '../lib/notifications';
 import { buildDailyPlan, displayTime, planLabels } from '../lib/dailyPlan';
+const { localDateKey } = require('../lib/localDate');
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const MOODS = [
@@ -68,6 +69,7 @@ export default function PatientHomeScreen({ route, navigation }) {
   const [planSaving, setPlanSaving] = useState(false);
 
   const [fetchError, setFetchError] = useState('');
+  const [codeInvalid, setCodeInvalid] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [claimedPatientId, setClaimedPatientId] = useState(null);
   const pendingMedLogs = useRef(new Set());
@@ -91,6 +93,7 @@ export default function PatientHomeScreen({ route, navigation }) {
 
   const fetchData = async () => {
     setFetchError('');
+    setCodeInvalid(false);
     try {
       let { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError) throw userError;
@@ -111,6 +114,12 @@ export default function PatientHomeScreen({ route, navigation }) {
         user = anonData.user;
       }
 
+      if (code && !user.is_anonymous) {
+        setCodeInvalid(true);
+        setFetchError('This device is signed in as a caregiver. Open the welcome screen on the patient’s device to enter the pairing code.');
+        return;
+      }
+
       let patientData = null;
 
       if (patientId) {
@@ -124,11 +133,8 @@ export default function PatientHomeScreen({ route, navigation }) {
 
         if (claimError || !claimed) {
           console.error('claim_patient_code failed', claimError);
-          Alert.alert(
-            'Invalid Code',
-            claimError?.message || 'This code is invalid or has already been used.',
-            [{ text: 'OK', onPress: () => navigation.navigate('Landing') }]
-          );
+          setCodeInvalid(true);
+          setFetchError(claimError?.message || 'This code is invalid, expired, or has already been used. Ask your caregiver for a new code.');
           return;
         }
 
@@ -137,7 +143,11 @@ export default function PatientHomeScreen({ route, navigation }) {
         navigation.setParams({ patientId: claimed.id, code: undefined });
       }
 
-      if (!patientData) return;
+      if (!patientData) {
+        setCodeInvalid(true);
+        setFetchError('No patient is connected to this session. Enter a pairing code from the welcome screen.');
+        return;
+      }
       setPatient(patientData);
 
       const { data: schedules, error: schedulesError } = await supabase.from('medication_schedule').select('*').eq('patient_id', patientData.id).eq('active', true);
@@ -172,11 +182,11 @@ export default function PatientHomeScreen({ route, navigation }) {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-      const { data: logs, error: logsError } = await supabase.from('medication_log').select('*').eq('patient_id', patientData.id).gte('logged_at', todayStart.toISOString());
+      const { data: logs, error: logsError } = await supabase.from('medication_log').select('*').eq('patient_id', patientData.id).eq('log_day', localDateKey(todayStart));
       if (logsError) throw logsError;
       setMedLogs(logs || []);
 
-      const { data: comps, error: compsError } = await supabase.from('task_completion').select('*').eq('patient_id', patientData.id).gte('completed_at', todayStart.toISOString());
+      const { data: comps, error: compsError } = await supabase.from('task_completion').select('*').eq('patient_id', patientData.id).eq('completion_day', localDateKey(todayStart));
       if (compsError) throw compsError;
       setTaskCompletions(comps || []);
 
@@ -192,12 +202,12 @@ export default function PatientHomeScreen({ route, navigation }) {
       if (moodError) throw moodError;
       setMoodToday(todayMood?.[0] || null);
 
-      const planDate = new Date().toISOString().slice(0, 10);
+      const planDate = localDateKey(new Date());
       const { data: plan } = await supabase.from('daily_plans').select('*').eq('patient_id', patientData.id).eq('plan_date', planDate).maybeSingle();
       setDailyPlan(plan || null);
     } catch (err) {
       console.error('PatientHome fetch failed', err);
-      setFetchError('Could not load your care plan. Please try again.');
+      setFetchError(err?.message ? `Could not load your care plan: ${err.message}` : 'Could not load your care plan. Please try again.');
     } finally {
       setLoadingInitial(false);
     }
@@ -234,6 +244,7 @@ export default function PatientHomeScreen({ route, navigation }) {
           patient_id: patient.id,
           schedule_id: medication.schedule_id || null,
           status,
+          log_day: localDateKey(new Date()),
         })
         .select('id')
         .single();
@@ -269,7 +280,7 @@ export default function PatientHomeScreen({ route, navigation }) {
     try {
       const { data: savedCompletion, error } = await supabase
         .from('task_completion')
-        .insert({ task_id: taskId, patient_id: patient.id, status })
+        .insert({ task_id: taskId, patient_id: patient.id, status, completion_day: localDateKey(new Date()) })
         .select('id')
         .single();
       if (error) {
@@ -341,7 +352,7 @@ export default function PatientHomeScreen({ route, navigation }) {
     if (Object.values(planAnswers).some((answer) => !answer) || !patient || planSaving) return;
     setPlanSaving(true);
     const blocks = buildDailyPlan(planAnswers, medications);
-    const planDate = new Date().toISOString().slice(0, 10);
+    const planDate = localDateKey(new Date());
     const { data, error } = await supabase
       .from('daily_plans')
       .upsert({ patient_id: patient.id, plan_date: planDate, answers: planAnswers, blocks }, { onConflict: 'patient_id,plan_date' })
@@ -477,11 +488,14 @@ export default function PatientHomeScreen({ route, navigation }) {
           {fetchError}
         </Text>
         <TouchableOpacity
-          onPress={() => { setLoadingInitial(true); fetchData(); }}
+          onPress={() => { if (codeInvalid) navigation.navigate('Landing'); else { setLoadingInitial(true); fetchData(); } }}
           style={{ backgroundColor: NAVY, paddingVertical: 14, paddingHorizontal: 32, borderRadius: 8 }}
         >
-          <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: 16, color: WHITE }}>Try Again</Text>
+          <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: 16, color: WHITE }}>{codeInvalid ? 'Enter another code' : 'Try Again'}</Text>
         </TouchableOpacity>
+        {!codeInvalid && <TouchableOpacity onPress={() => navigation.navigate('Landing')} style={{ padding: 16 }} accessibilityRole="button">
+          <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: 16, color: NAVY }}>Enter another code</Text>
+        </TouchableOpacity>}
       </View>
     );
   }
