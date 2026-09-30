@@ -6,7 +6,7 @@ Anchor is an Expo phone app for shared caregiving: caregivers create care plans,
 
 1. Copy `.env.example` to `.env` and fill in the Supabase project URL and anon key.
 2. In Supabase SQL Editor, run `lib/schema.sql` for a new project. It contains the tables, RLS policies, and pairing functions the app needs.
-   For an existing project, also run `lib/migrations/20260917_patient_log_undo.sql` and `lib/migrations/20260922_daily_plans.sql` once.
+   For an existing project, run the SQL files in `lib/migrations/` in date order once, including `20260929_caregiver_medication_logs.sql` so caregivers can record doses they give. Patient pairing requires Anonymous Sign-Ins enabled in Supabase Auth.
 3. Install and start the app:
 
    ```bash
@@ -22,7 +22,7 @@ Open the app once on each device and allow notifications. Patient medication rem
 
 ## Important setup
 
-Configure a password-recovery redirect URL in Supabase Auth for `anchor://reset-password` (and your deployed web reset URL, if you use the web app). Pairing codes are eight digits and expire after 24 hours. An owner can long-press a patient card to reset their pairing code if the patient needs to reconnect.
+Configure a password-recovery redirect URL in Supabase Auth for `anchor://reset-password` (and your deployed web reset URL, if you use the web app). Pairing codes are eight digits and expire after 24 hours. An owner can use the new-code action on an unpaired patient card to replace an expired code, or long-press a card to reset pairing.
 
 ## Checks
 

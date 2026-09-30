@@ -16,9 +16,10 @@ import {
 import { supabase } from '../lib/supabase';
 import useCustomFonts from '../lib/useCustomFonts';
 import Button from '../components/Button';
+import TimePickerInput from '../components/TimePickerInput';
 import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
 
-export default function AppointmentsScreen({ route }) {
+export default function AppointmentsScreen({ route, navigation }) {
   const { patientId, isPatient } = route.params;
   const { width } = useWindowDimensions();
   const { fontsLoaded, FontProvider } = useCustomFonts();
@@ -32,17 +33,23 @@ export default function AppointmentsScreen({ route }) {
   const [time, setTime] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
   const fetchAppointments = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('appointments')
       .select('*')
       .eq('patient_id', patientId)
       .order('appointment_time', { ascending: true });
 
+    if (error) {
+      setLoadError(error.message || 'Could not load appointments. Pull down to try again.');
+      return;
+    }
+    setLoadError('');
     setAppointments(data || []);
   };
 
@@ -97,7 +104,7 @@ export default function AppointmentsScreen({ route }) {
 
     setLoading(false);
     if (error) {
-      Alert.alert('Error', 'Failed to add appointment.');
+      Alert.alert('Could not add appointment', error.message || 'Please try again.');
       return;
     }
 
@@ -112,10 +119,11 @@ export default function AppointmentsScreen({ route }) {
   };
 
   const handleComplete = async (appt) => {
-    await supabase
+    const { error } = await supabase
       .from('appointments')
       .update({ completed: true })
       .eq('id', appt.id);
+    if (error) { Alert.alert('Could not update appointment', error.message || 'Please try again.'); return; }
     fetchAppointments();
   };
 
@@ -126,7 +134,8 @@ export default function AppointmentsScreen({ route }) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await supabase.from('appointments').delete().eq('id', apptId);
+          const { error } = await supabase.from('appointments').delete().eq('id', apptId);
+          if (error) { Alert.alert('Could not delete appointment', error.message || 'Please try again.'); return; }
           fetchAppointments();
         },
       },
@@ -143,6 +152,8 @@ export default function AppointmentsScreen({ route }) {
       renderItem={null}
       ListHeaderComponent={
         <View style={{ padding: s(20) }}>
+          <TouchableOpacity onPress={() => navigation.goBack()} accessibilityRole="button" style={{ marginBottom: s(10) }}><Text style={{ color: NAVY, fontFamily: 'DMSans_500Medium' }}>← Back</Text></TouchableOpacity>
+          {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(12) }}>{loadError}</Text>}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: s(16) }}>
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY }}>Appointments</Text>
             {!isPatient && (
@@ -263,14 +274,7 @@ export default function AppointmentsScreen({ route }) {
                 onChangeText={setDate}
               />
 
-              <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Time (HH:MM) *</Text>
-              <TextInput
-                style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }}
-                placeholder="14:30"
-                placeholderTextColor={PLACEHOLDER}
-                value={time}
-                onChangeText={setTime}
-              />
+              <TimePickerInput label="Appointment time *" value={time} onChange={setTime} />
 
               <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Notes</Text>
               <TextInput

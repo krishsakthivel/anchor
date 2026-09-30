@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -15,19 +16,25 @@ import {
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
+import TimePickerInput from '../components/TimePickerInput';
 import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
 import { displayTime, planLabels } from '../lib/dailyPlan';
+const { localDateKey } = require('../lib/localDate');
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const TABS = ['Medications', 'Tasks', 'Schedule', 'Notes', 'Vitals', 'Appointments', 'Mood', 'Report'];
 const REPORT_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 export default function PatientDetailScreen({ route, navigation }) {
-  const { patientId, patientName, canEdit = true } = route.params;
+  const { patientId, patientName, canEdit = true, initialTab = 'Medications' } = route.params;
   const { width } = useWindowDimensions();
-  const [activeTab, setActiveTab] = useState('Medications');
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [medications, setMedications] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [schedules, setSchedules] = useState([]);
+  const [medLogs, setMedLogs] = useState([]);
+  const [loggingId, setLoggingId] = useState(null);
+  const [actionError, setActionError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [addMedVisible, setAddMedVisible] = useState(false);
   const [addTaskVisible, setAddTaskVisible] = useState(false);
@@ -46,6 +53,8 @@ export default function PatientDetailScreen({ route, navigation }) {
   const s = (size) => Math.round(size * scale);
 
   const fetchData = async () => {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
     const { data: meds, error: medsError } = await supabase
       .from('medications')
       .select('*')
@@ -58,13 +67,36 @@ export default function PatientDetailScreen({ route, navigation }) {
       .eq('patient_id', patientId)
       .order('created_at', { ascending: false });
 
-    if (medsError || tasksError) {
-      console.error('patient detail fetch failed', medsError || tasksError);
+    const { data: scheduleRows, error: scheduleError } = await supabase.from('medication_schedule').select('*').eq('patient_id', patientId).eq('active', true);
+    const { data: logRows, error: logError } = await supabase.from('medication_log').select('*').eq('patient_id', patientId).eq('log_day', localDateKey(todayStart));
+
+    if (medsError || tasksError || scheduleError || logError) {
+      console.error('patient detail fetch failed', medsError || tasksError || scheduleError || logError);
       Alert.alert('Error', 'Could not load this care plan. Pull down to try again.');
       return;
     }
     setMedications(meds || []);
     setTasks(taskData || []);
+    setSchedules(scheduleRows || []);
+    setMedLogs(logRows || []);
+  };
+
+  const logMedicine = async (med, schedule, status) => {
+    const slotId = schedule?.id || med.id;
+    if (loggingId) return;
+    setLoggingId(slotId);
+    setActionError('');
+    try {
+      const { error } = await supabase.from('medication_log').insert({
+        medication_id: med.id, patient_id: patientId, schedule_id: schedule?.id || null, status, log_day: localDateKey(new Date()),
+      });
+      if (error) throw error;
+      await fetchData();
+    } catch (error) {
+      setActionError(error.message || 'Could not record this medicine. Please try again.');
+    } finally {
+      setLoggingId(null);
+    }
   };
 
   useEffect(() => { fetchData(); }, [patientId]);
@@ -118,7 +150,7 @@ export default function PatientDetailScreen({ route, navigation }) {
 
     if (error) {
       setLoading(false);
-      Alert.alert('Error', 'Failed to add medication.');
+      Alert.alert('Could not add medication', error.message || 'Please try again.');
       return;
     }
 
@@ -137,7 +169,7 @@ export default function PatientDetailScreen({ route, navigation }) {
           const { error: rollbackError } = await supabase.from('medications').delete().eq('id', med.id);
           if (rollbackError) console.error('medication rollback failed', rollbackError);
         setLoading(false);
-        Alert.alert('Error', 'Medication was not saved because its schedule could not be created.');
+        Alert.alert('Could not add medication', scheduleError.message || 'The medicine schedule could not be created.');
         return;
       }
     }
@@ -185,7 +217,7 @@ export default function PatientDetailScreen({ route, navigation }) {
 
     setLoading(false);
     if (error) {
-      Alert.alert('Error', 'Failed to add task.');
+      Alert.alert('Could not add task', error.message || 'Please try again.');
       return;
     }
 
@@ -265,6 +297,7 @@ export default function PatientDetailScreen({ route, navigation }) {
       case 'Medications':
         return (
           <>
+            {!!actionError && <Text style={{ color: '#C0392B', marginBottom: s(10), fontSize: s(14) }}>{actionError}</Text>}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Medications</Text>
               {canEdit && <TouchableOpacity onPress={() => setAddMedVisible(true)}>
@@ -283,6 +316,22 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(15), color: NAVY }}>{med.name}</Text>
                   {med.dosage && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{med.dosage}</Text>}
                   {med.instructions && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#999' }}>{med.instructions}</Text>}
+                  {(() => {
+                    const medSchedules = schedules.filter((schedule) => schedule.medication_id === med.id);
+                    const day = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+                    const due = medSchedules.length ? medSchedules.filter((schedule) => Array.isArray(schedule.days) ? schedule.days.includes(day) : String(schedule.days || '').includes(day)) : [null];
+                    if (!due.length) return <Text style={{ color: '#666', marginTop: s(7) }}>Not due today</Text>;
+                    return due.map((schedule) => {
+                      const log = medLogs.find((entry) => entry.medication_id === med.id && entry.schedule_id === (schedule?.id || null));
+                      const timeLabel = schedule?.time ? displayTime(String(schedule.time).slice(0, 5)) : 'Any time today';
+                      return <View key={schedule?.id || med.id} style={{ marginTop: s(10), paddingTop: s(9), borderTopWidth: 1, borderTopColor: '#DCE4F2' }}>
+                        <Text style={{ color: NAVY, fontFamily: 'DMSans_500Medium' }}>{timeLabel} · {log ? `Marked ${log.status}` : 'Due today'}</Text>
+                        {canEdit && !log && <View style={{ flexDirection: 'row', marginTop: s(8) }}>
+                          {['taken', 'skipped', 'missed'].map((status) => <TouchableOpacity key={status} disabled={!!loggingId} onPress={() => logMedicine(med, schedule, status)} accessibilityRole="button" style={{ backgroundColor: status === 'taken' ? NAVY : '#E5EAF5', paddingVertical: s(9), paddingHorizontal: s(11), borderRadius: 8, marginRight: s(7), opacity: loggingId ? 0.5 : 1 }}><Text style={{ color: status === 'taken' ? WHITE : NAVY, fontFamily: 'DMSans_500Medium' }}>{status[0].toUpperCase() + status.slice(1)}</Text></TouchableOpacity>)}
+                        </View>}
+                      </View>;
+                    });
+                  })()}
                   {med.total_pills && (
                     <TouchableOpacity disabled={!canEdit} onPress={() => canEdit && handleUpdatePills(med)}>
                       <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: med.pills_remaining <= (med.refill_alert_at || 10) ? '#C0392B' : '#666', marginTop: s(4) }}>
@@ -333,7 +382,7 @@ export default function PatientDetailScreen({ route, navigation }) {
         return <VitalsTab patientId={patientId} />;
 
       case 'Appointments':
-        return <AppointmentsTab patientId={patientId} />;
+        return <AppointmentsTab patientId={patientId} navigation={navigation} canEdit={canEdit} />;
 
       case 'Mood':
         return <MoodTab patientId={patientId} />;
@@ -396,8 +445,7 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Dosage</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="e.g. 100mg" placeholderTextColor={PLACEHOLDER} value={medDosage} onChangeText={setMedDosage} />
 
-                  <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Time (HH:MM)</Text>
-                  <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="e.g. 08:00" placeholderTextColor={PLACEHOLDER} value={medTime} onChangeText={setMedTime} />
+                  <TimePickerInput label="Medicine time (optional)" value={medTime} onChange={setMedTime} optional />
 
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Instructions</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="e.g. Take with food" placeholderTextColor={PLACEHOLDER} value={medInstructions} onChangeText={setMedInstructions} />
@@ -427,8 +475,7 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Description</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="Optional details" placeholderTextColor={PLACEHOLDER} value={taskDesc} onChangeText={setTaskDesc} />
 
-                  <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Time (HH:MM)</Text>
-                  <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(16) }} placeholder="e.g. 09:00" placeholderTextColor={PLACEHOLDER} value={taskTime} onChangeText={setTaskTime} />
+                  <TimePickerInput label="Task time (optional)" value={taskTime} onChange={setTaskTime} optional />
 
                   <Button title={loading ? 'Adding...' : 'Add Task'} onPress={handleAddTask} disabled={!taskTitle.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
                   <Button title="Cancel" onPress={() => { setAddTaskVisible(false); setTaskTitle(''); setTaskDesc(''); setTaskTime(''); }} style={{ backgroundColor: '#999' }} />
@@ -448,7 +495,7 @@ function DailyScheduleTab({ patientId, canEdit }) {
   const s = (size) => Math.round(size * (width / 375));
   const [plan, setPlan] = useState(null);
   const [saving, setSaving] = useState(false);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateKey(new Date());
 
   const fetchPlan = async () => {
     const { data } = await supabase.from('daily_plans').select('*').eq('patient_id', patientId).eq('plan_date', today).maybeSingle();
@@ -606,7 +653,7 @@ function VitalsTab({ patientId }) {
   );
 }
 
-function AppointmentsTab({ patientId }) {
+function AppointmentsTab({ patientId, navigation, canEdit }) {
   const { width } = useWindowDimensions();
   const s = (size) => Math.round(size * (width / 375));
   const [appointments, setAppointments] = useState([]);
@@ -616,14 +663,14 @@ function AppointmentsTab({ patientId }) {
     setAppointments(data || []);
   };
 
-  useEffect(() => { fetchAppts(); }, [patientId]);
+  useFocusEffect(React.useCallback(() => { fetchAppts(); }, [patientId]));
 
   const now = new Date();
   const upcoming = appointments.filter((a) => new Date(a.appointment_time) >= now && !a.completed);
 
   return (
     <>
-      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginBottom: s(12) }}>Upcoming Appointments</Text>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Upcoming Appointments</Text><TouchableOpacity onPress={() => navigation.navigate('Appointments', { patientId, isPatient: !canEdit })}><Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold' }}>{canEdit ? '+ Add' : 'View all'}</Text></TouchableOpacity></View>
       {upcoming.length === 0 ? (
         <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No upcoming appointments</Text>
       ) : (

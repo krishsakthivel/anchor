@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -19,6 +20,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
+import { displayTime } from '../lib/dailyPlan';
+const { localDateKey } = require('../lib/localDate');
 import { scheduleCaregiverMedicationReminders } from '../lib/notifications';
 import {
   NAVY,
@@ -60,15 +63,18 @@ async function getPatientSummaries(patientIds) {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const todayStartIso = todayStart.toISOString();
+  const todayKey = localDateKey(todayStart);
 
   const [medsRes, schedRes, tasksRes, medLogRes, taskCompRes, moodRes] = await Promise.all([
     supabase.from('medications').select('id, patient_id, total_pills, pills_remaining, refill_alert_at').in('patient_id', patientIds),
     supabase.from('medication_schedule').select('id, medication_id, patient_id, days').in('patient_id', patientIds).eq('active', true),
     supabase.from('tasks').select('id, patient_id, days').in('patient_id', patientIds).eq('active', true),
-    supabase.from('medication_log').select('medication_id, schedule_id, patient_id, status').in('patient_id', patientIds).gte('logged_at', todayStartIso),
-    supabase.from('task_completion').select('task_id, patient_id, status').in('patient_id', patientIds).gte('completed_at', todayStartIso),
+    supabase.from('medication_log').select('medication_id, schedule_id, patient_id, status').in('patient_id', patientIds).eq('log_day', todayKey),
+    supabase.from('task_completion').select('task_id, patient_id, status').in('patient_id', patientIds).eq('completion_day', todayKey),
     supabase.from('mood_logs').select('patient_id, mood, logged_at').in('patient_id', patientIds).gte('logged_at', todayStartIso).order('logged_at', { ascending: false }),
   ]);
+  const summaryError = [medsRes, schedRes, tasksRes, medLogRes, taskCompRes, moodRes].find((result) => result.error)?.error;
+  if (summaryError) throw summaryError;
 
   const meds = medsRes.data || [];
   const schedules = schedRes.data || [];
@@ -131,6 +137,10 @@ export default function CaregiverHomeScreen({ navigation }) {
   const [caregiverName, setCaregiverName] = useState('');
   const [caregiverId, setCaregiverId] = useState(null);
   const [patients, setPatients] = useState([]);
+  const [appointments, setAppointments] = useState([]);
+  const [calendarRoutines, setCalendarRoutines] = useState([]);
+  const [selectedDate, setSelectedDate] = useState(localDateKey(new Date()));
+  const [homeError, setHomeError] = useState('');
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -150,9 +160,13 @@ export default function CaregiverHomeScreen({ navigation }) {
   const greeting = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
 
   const fetchPatients = useCallback(async () => {
+    setHomeError('');
     try {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) return;
+      if (userError || !user) {
+        setHomeError('Your session has expired. Please sign in again.');
+        return;
+      }
       setCaregiverId(user.id);
 
       const { data: profile } = await supabase
@@ -169,6 +183,7 @@ export default function CaregiverHomeScreen({ navigation }) {
 
       if (error) {
         console.error('patients fetch failed', error);
+        setHomeError(error.message || 'Could not load your patients. Pull down to try again.');
         Alert.alert('Error', 'Could not load your patients. Pull down to try again.');
         return;
       }
@@ -185,12 +200,50 @@ export default function CaregiverHomeScreen({ navigation }) {
         permissionLevel: patient.created_by === user.id ? 'owner' : (permissionByPatient.get(patient.id) || 'viewer'),
       }));
       const patientIds = base.map((patient) => patient.id);
-      const [{ data: medicationRows }, { data: scheduleRows }] = await Promise.all([
+      const unpairedCodes = base.filter((patient) => patient.created_by === user.id && !patient.paired_user_id && patient.pair_code).map((patient) => patient.pair_code);
+      if (unpairedCodes.length) {
+        const { data: codes, error: codesError } = await supabase.from('pairing_codes').select('code, expires_at, used').in('code', unpairedCodes);
+        if (codesError) throw codesError;
+        const codeByValue = new Map((codes || []).map((row) => [row.code, row]));
+        base.forEach((patient) => { patient.codeExpired = !patient.paired_user_id && (!codeByValue.has(patient.pair_code) || codeByValue.get(patient.pair_code).used || new Date(codeByValue.get(patient.pair_code).expires_at) <= new Date()); });
+      }
+      if (patientIds.length) {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(start);
+        end.setDate(end.getDate() + 7);
+        const { data: appointmentRows, error: appointmentError } = await supabase.from('appointments').select('id, patient_id, title, appointment_time, completed').in('patient_id', patientIds).gte('appointment_time', start.toISOString()).lt('appointment_time', end.toISOString()).order('appointment_time');
+        if (appointmentError) {
+          console.error('appointments fetch failed', appointmentError);
+          setHomeError('Could not load appointments. Pull down to try again.');
+          setAppointments([]);
+        } else {
+          setAppointments((appointmentRows || []).map((row) => ({ ...row, patientName: base.find((patient) => patient.id === row.patient_id)?.name || 'Patient', canEdit: base.find((patient) => patient.id === row.patient_id)?.permissionLevel !== 'viewer' })));
+        }
+      } else {
+        setAppointments([]);
+      }
+      const [medicationRes, scheduleRes, taskRes] = await Promise.all([
         supabase.from('medications').select('id, patient_id, name').in('patient_id', patientIds),
         supabase.from('medication_schedule').select('medication_id, patient_id, time, days').in('patient_id', patientIds).eq('active', true),
+        supabase.from('tasks').select('id, patient_id, title, time, days').in('patient_id', patientIds).eq('active', true),
       ]);
+      const calendarError = [medicationRes, scheduleRes, taskRes].find((result) => result.error)?.error;
+      if (calendarError) {
+        console.error('calendar routines fetch failed', calendarError);
+        setHomeError('Could not load scheduled medicines and tasks. Pull down to try again.');
+      }
+      const medicationRows = medicationRes.data;
+      const scheduleRows = scheduleRes.data;
+      const taskRows = taskRes.data;
       const patientNames = new Map(base.map((patient) => [patient.id, patient.name]));
       const medicationNames = new Map((medicationRows || []).map((medication) => [medication.id, medication.name]));
+      const scheduledMedicationIds = new Set((scheduleRows || []).map((row) => row.medication_id));
+      setCalendarRoutines([
+        ...(scheduleRows || []).map((row) => ({ patientId: row.patient_id, patientName: patientNames.get(row.patient_id) || 'Patient', title: medicationNames.get(row.medication_id) || 'Medicine', time: row.time, days: row.days, kind: 'Medicine' })),
+        ...(medicationRows || []).filter((row) => !scheduledMedicationIds.has(row.id)).map((row) => ({ patientId: row.patient_id, patientName: patientNames.get(row.patient_id) || 'Patient', title: row.name, time: null, days: null, kind: 'Medicine' })),
+        ...(taskRows || []).map((row) => ({ patientId: row.patient_id, patientName: patientNames.get(row.patient_id) || 'Patient', title: row.title, time: row.time, days: row.days, kind: 'Task' })),
+      ]);
       const today = DAYS[new Date().getDay()];
       scheduleCaregiverMedicationReminders((scheduleRows || [])
         .filter((schedule) => Array.isArray(schedule.days) ? schedule.days.includes(today) : String(schedule.days || '').includes(today))
@@ -212,22 +265,18 @@ export default function CaregiverHomeScreen({ navigation }) {
         })));
       } catch (summaryErr) {
         console.error('getPatientSummaries failed', summaryErr);
+        setHomeError('Could not load today’s routine. Pull down to try again.');
       }
     } catch (err) {
       console.error('fetchPatients failed', err);
+      setHomeError(err?.message || 'Could not load your patients. Pull down to try again.');
       Alert.alert('Error', 'Could not load your patients. Pull down to try again.');
     }
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        await fetchPatients();
-      } finally {
-        setInitialLoading(false);
-      }
-    })();
-  }, [fetchPatients]);
+  useFocusEffect(useCallback(() => {
+    fetchPatients().finally(() => setInitialLoading(false));
+  }, [fetchPatients]));
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -241,6 +290,15 @@ export default function CaregiverHomeScreen({ navigation }) {
 
   const alertCount = patients.filter((p) => p.lowStockCount > 0).length;
   const routineInProgressCount = patients.filter((p) => p.routineTotal > 0 && p.routineDone < p.routineTotal).length;
+  const calendarDays = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() + index);
+    return { key: localDateKey(date), label: date.toLocaleDateString(undefined, { weekday: 'short' }), number: date.getDate() };
+  });
+  const selectedAppointments = appointments.filter((item) => localDateKey(new Date(item.appointment_time)) === selectedDate);
+  const selectedDay = DAYS[new Date(`${selectedDate}T12:00:00`).getDay()];
+  const selectedRoutines = calendarRoutines.filter((item) => !item.days || (Array.isArray(item.days) ? item.days.includes(selectedDay) : String(item.days).includes(selectedDay))).sort((a, b) => String(a.time || '99:99').localeCompare(String(b.time || '99:99')));
 
   const handleAddPatient = async () => {
     const name = newPatientName.trim();
@@ -437,7 +495,7 @@ export default function CaregiverHomeScreen({ navigation }) {
                 color={paired ? SUCCESS : MUTED}
               />
               <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: paired ? SUCCESS : MUTED, marginLeft: s(4) }}>
-                {paired ? 'Connected' : `Code ${item.pair_code}`}
+                {paired ? 'Connected' : !isOwner ? 'Not connected' : item.codeExpired ? 'Code expired' : `Code ${item.pair_code}`}
               </Text>
             </View>
           </View>
@@ -450,6 +508,7 @@ export default function CaregiverHomeScreen({ navigation }) {
           </View>
           <Ionicons name="chevron-forward" size={s(18)} color={PLACEHOLDER} style={{ marginLeft: s(4) }} />
         </View>
+        {!paired && isOwner && <TouchableOpacity onPress={() => handleResetPairing(item)} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingVertical: s(8) }}><Text style={{ color: NAVY, fontFamily: 'DMSans_500Medium', fontSize: s(12) }}>Code expired or not working? Get a new code</Text></TouchableOpacity>}
 
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: s(15), paddingTop: s(12), borderTopWidth: 1, borderTopColor: BORDER }}>
           {hasRoutine ? (
@@ -545,6 +604,17 @@ export default function CaregiverHomeScreen({ navigation }) {
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(24), color: NAVY, marginTop: s(16) }}>
               Good {greeting}{caregiverName ? `, ${caregiverName}` : ''}
             </Text>
+            {!!homeError && <Text style={{ color: DANGER, marginTop: s(10), fontFamily: 'DMSans_500Medium' }}>{homeError}</Text>}
+
+            <View style={{ marginTop: s(18), backgroundColor: SURFACE, borderRadius: 14, padding: s(14) }}>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginBottom: s(10) }}>Calendar · next 7 days</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                {calendarDays.map((day) => <TouchableOpacity key={day.key} onPress={() => setSelectedDate(day.key)} accessibilityRole="button" accessibilityState={{ selected: selectedDate === day.key }} style={{ alignItems: 'center', paddingVertical: s(8), paddingHorizontal: s(5), borderRadius: 8, backgroundColor: selectedDate === day.key ? NAVY : WHITE }}><Text style={{ color: selectedDate === day.key ? WHITE : MUTED, fontSize: s(11) }}>{day.label}</Text><Text style={{ color: selectedDate === day.key ? WHITE : NAVY, fontFamily: 'DMSans_700Bold', fontSize: s(16) }}>{day.number}</Text></TouchableOpacity>)}
+              </View>
+              {selectedAppointments.map((item) => <TouchableOpacity key={item.id} onPress={() => navigation.navigate('Appointments', { patientId: item.patient_id, isPatient: !item.canEdit })} style={{ padding: s(9), marginTop: s(8), backgroundColor: WHITE, borderRadius: 8 }}><Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold' }}>{new Date(item.appointment_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · {item.title}</Text><Text style={{ color: MUTED }}>Appointment · {item.patientName}{item.completed ? ' · Completed' : ''}</Text></TouchableOpacity>)}
+              {selectedRoutines.map((item, index) => <TouchableOpacity key={`${item.kind}-${item.patientId}-${index}`} onPress={() => navigation.navigate('PatientDetail', { patientId: item.patientId, patientName: item.patientName, canEdit: patients.find((patient) => patient.id === item.patientId)?.permissionLevel !== 'viewer', initialTab: item.kind === 'Medicine' ? 'Medications' : 'Tasks' })} style={{ padding: s(9), marginTop: s(8), backgroundColor: WHITE, borderRadius: 8 }}><Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold' }}>{item.time ? `${displayTime(String(item.time).slice(0, 5))} · ` : ''}{item.title}</Text><Text style={{ color: MUTED }}>{item.kind} · {item.patientName}</Text></TouchableOpacity>)}
+              {!selectedAppointments.length && !selectedRoutines.length && <Text style={{ color: MUTED, marginTop: s(10) }}>Nothing scheduled on this day</Text>}
+            </View>
 
             {patients.length > 0 && (
               <View style={{ marginTop: s(16), backgroundColor: SURFACE, borderRadius: 14, padding: s(14) }}>
@@ -662,7 +732,7 @@ export default function CaregiverHomeScreen({ navigation }) {
               {successCode?.reset ? `${successCode?.name}'s pairing code was reset` : `${successCode?.name} was added`}
             </Text>
             <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: MUTED, textAlign: 'center', marginTop: s(6) }}>
-              Share this code so they can connect from the app's welcome screen.
+              Share this code so they can connect from the app's welcome screen. It expires in 24 hours.
             </Text>
             <View style={{ backgroundColor: SURFACE, borderRadius: 8, paddingVertical: s(14), paddingHorizontal: s(24), marginTop: s(18), marginBottom: s(20) }}>
               <Text selectable style={{ fontFamily: 'DMSans_700Bold', fontSize: s(30), color: NAVY, letterSpacing: s(6) }}>
