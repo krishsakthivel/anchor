@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useFonts, DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
+import useAppFonts from '../lib/useAppFonts';
+import LoadingState from '../components/LoadingState';
+import { setReminderUser } from '../lib/notifications';
+const { withTimeout, initialDestination } = require('../lib/startup');
 
 import LandingScreen from '../screens/LandingScreen';
 import CaregiverLoginScreen from '../screens/CaregiverLoginScreen';
@@ -20,6 +22,7 @@ import CareNotesScreen from '../screens/CareNotesScreen';
 import MoodCheckinScreen from '../screens/MoodCheckinScreen';
 import VitalsScreen from '../screens/VitalsScreen';
 import WeeklyReportScreen from '../screens/WeeklyReportScreen';
+import FamilyScreen from '../screens/FamilyScreen';
 import { supabase } from '../lib/supabase';
 
 const Stack = createNativeStackNavigator();
@@ -33,84 +36,66 @@ const linking = {
 };
 
 export default function RootNavigator() {
+  const navigationRef = React.useRef(null);
   const [initialRoute, setInitialRoute] = React.useState(null);
   const [initialPatientId, setInitialPatientId] = React.useState(null);
-  const initialRouteRef = React.useRef(null);
-  const [fontsLoaded] = useFonts({
-    DMSans_400Regular,
-    DMSans_500Medium,
-    DMSans_700Bold,
-  });
+  const [routeError, setRouteError] = React.useState(null);
+  const [attempt, setAttempt] = React.useState(0);
+  const [fontsLoaded, fontError, retryFonts] = useAppFonts();
 
   React.useEffect(() => {
-    const resolveRoute = async (session) => {
-      let route;
-      setInitialPatientId(null);
-      if (!session) {
-        route = 'Landing';
-      } else if (session.user?.is_anonymous) {
-        const { data: patientRow } = await supabase
-          .from('patients')
-          .select('id')
-          .eq('paired_user_id', session.user.id)
-          .maybeSingle();
-
-        if (patientRow) {
-          setInitialPatientId(patientRow.id);
-          route = 'PatientHome';
-        } else {
-          route = 'Landing';
-        }
-      } else {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', session.user.id)
-          .maybeSingle();
-
-        if (profile?.role === 'patient') {
-          const { data: patientRow } = await supabase
-            .from('patients')
-            .select('id')
-            .eq('paired_user_id', session.user.id)
-            .maybeSingle();
-          setInitialPatientId(patientRow?.id || null);
-          route = 'PatientHome';
-        } else {
-          route = 'CaregiverHome';
-        }
+    let active = true;
+    let generation = 0;
+    const timers = new Set();
+    const loadRoute = async (suppliedSession, supplied = false) => {
+      const current = ++generation;
+      try {
+        const destination = await withTimeout(async () => {
+          let session = suppliedSession;
+          if (!supplied) {
+            const { data, error } = await supabase.auth.getSession();
+            if (error) throw error;
+            session = data.session;
+          }
+          if (!active || current !== generation) return null;
+          await setReminderUser(session?.user?.id || null);
+          // Installing a recovery session emits SIGNED_IN. Keep the password
+          // form mounted until it has saved, instead of replacing it with home.
+          if (session && navigationRef.current?.getCurrentRoute()?.name === 'ResetPassword') return null;
+          return initialDestination(supabase, session);
+        });
+        if (!active || current !== generation || !destination) return;
+        setInitialPatientId(destination.patientId);
+        setInitialRoute(destination.route);
+        setRouteError(null);
+      } catch (error) {
+        if (active && current === generation) setRouteError(error);
       }
-
-      initialRouteRef.current = route;
-      setInitialRoute(route);
     };
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      resolveRoute(session);
+    loadRoute();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'INITIAL_SESSION') return;
+      // Leave the auth callback before making further Supabase requests.
+      const timer = setTimeout(() => { timers.delete(timer); if (active) loadRoute(session, true); }, 0);
+      timers.add(timer);
     });
+    return () => { active = false; generation++; timers.forEach(clearTimeout); subscription.unsubscribe(); };
+  }, [attempt]);
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (initialRouteRef.current === null) return;
-      resolveRoute(session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  if (initialRoute === null || !fontsLoaded) {
-    return (
-      <SafeAreaProvider>
-        <View style={styles.loading}>
-          <ActivityIndicator size="large" color="#0F2C6B" />
-        </View>
-      </SafeAreaProvider>
-    );
+  const retry = () => {
+    setRouteError(null);
+    setInitialRoute(null);
+    retryFonts();
+    setAttempt(value => value + 1);
+  };
+  if (fontError || routeError || initialRoute === null || !fontsLoaded) {
+    return <SafeAreaProvider><LoadingState error={fontError || routeError} onRetry={retry} /></SafeAreaProvider>;
   }
 
   return (
     <SafeAreaProvider>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right', 'bottom']}>
-        <NavigationContainer linking={linking}>
+        <NavigationContainer ref={navigationRef} linking={linking}>
           <Stack.Navigator key={initialRoute} initialRouteName={initialRoute} screenOptions={{ headerShown: false }}>
             <Stack.Screen name="Landing" component={LandingScreen} />
             <Stack.Screen name="CaregiverLogin" component={CaregiverLoginScreen} />
@@ -131,17 +116,10 @@ export default function RootNavigator() {
             <Stack.Screen name="MoodCheckin" component={MoodCheckinScreen} />
             <Stack.Screen name="Vitals" component={VitalsScreen} />
             <Stack.Screen name="WeeklyReport" component={WeeklyReportScreen} />
+            <Stack.Screen name="Family" component={FamilyScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaView>
     </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  loading: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-});

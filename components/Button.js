@@ -24,7 +24,7 @@ export default function Button({ title, onPress, disabled, loading, style, textS
 const styles = StyleSheet.create({
   button: {
     backgroundColor: NAVY,
-    borderRadius: 8,
+    borderRadius: 4,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 16,

@@ -1,31 +1,14 @@
-import React, { useState, useEffect } from 'react';
+const { reportWindow, reportTotals } = require('../lib/reportWindow');
+import { useFocusEffect } from '@react-navigation/native';
+import React, { useState, useCallback } from 'react';
 import { View, Text, useWindowDimensions, ScrollView, RefreshControl } from 'react-native';
 import { supabase } from '../lib/supabase';
 import useCustomFonts from '../lib/useCustomFonts';
-import { NAVY } from '../theme/colors';
+import { NAVY, SURFACE } from '../theme/colors';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SCHEDULE_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
-const expectedSlots = (items, schedules, now) => {
-  const days = [];
-  for (let i = 6; i >= 0; i -= 1) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - i);
-    days.push(SCHEDULE_DAYS[date.getDay()]);
-  }
-
-  return (items || []).reduce((total, item) => {
-    const itemSchedules = (schedules || []).filter((schedule) => schedule.medication_id === item.id || schedule.task_id === item.id);
-    if (!itemSchedules.length) return total + 7;
-    return total + days.reduce((count, day) => (
-      count + itemSchedules.filter((schedule) => {
-        const configuredDays = Array.isArray(schedule.days) ? schedule.days : [];
-        return configuredDays.includes(day);
-      }).length
-    ), 0);
-  }, 0);
-};
 
 export default function WeeklyReportScreen({ route }) {
   const { patientId } = route.params;
@@ -33,61 +16,59 @@ export default function WeeklyReportScreen({ route }) {
   const { fontsLoaded, FontProvider } = useCustomFonts();
   const [report, setReport] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
-  const scale = width / 375;
+  const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
   const fetchReport = async () => {
+    try {
     const now = new Date();
-    const weekAgo = new Date(now);
-    weekAgo.setDate(weekAgo.getDate() - 7);
+    const { start, end, startDay, endDay } = reportWindow(now);
+    const firstDayStr = start.toISOString();
+    const dayAfterTodayStr = end.toISOString();
 
-    const weekAgoStr = weekAgo.toISOString();
-    const nowStr = now.toISOString();
-
-    const { data: medLogs } = await supabase
+    const { data: medLogs, error: medLogsError } = await supabase
       .from('medication_log')
       .select('*')
       .eq('patient_id', patientId)
-      .gte('logged_at', weekAgoStr)
-      .lte('logged_at', nowStr);
+      .gte('log_day', startDay)
+      .lt('log_day', endDay);
 
-    const { data: taskComps } = await supabase
+    const { data: taskComps, error: taskCompsError } = await supabase
       .from('task_completion')
       .select('*')
       .eq('patient_id', patientId)
-      .gte('completed_at', weekAgoStr)
-      .lte('completed_at', nowStr);
+      .gte('completion_day', startDay)
+      .lt('completion_day', endDay);
 
-    const { data: moodData } = await supabase
+    const { data: moodData, error: moodError } = await supabase
       .from('mood_logs')
       .select('*')
       .eq('patient_id', patientId)
-      .gte('logged_at', weekAgoStr)
-      .lte('logged_at', nowStr);
+      .gte('logged_at', firstDayStr)
+      .lt('logged_at', dayAfterTodayStr);
 
-    const { data: meds } = await supabase
+    const { data: meds, error: medsError } = await supabase
       .from('medications')
-      .select('id')
+      .select('id, created_at')
       .eq('patient_id', patientId);
 
-    const { data: medicationSchedules } = await supabase
+    const { data: medicationSchedules, error: medicationSchedulesError } = await supabase
       .from('medication_schedule')
-      .select('medication_id, days')
+      .select('*')
       .eq('patient_id', patientId)
       .eq('active', true);
 
-    const { data: tasks } = await supabase
+    const { data: tasks, error: tasksError } = await supabase
       .from('tasks')
-      .select('id, days')
+      .select('id, days, created_at')
       .eq('patient_id', patientId)
       .eq('active', true);
 
-    const medTaken = (medLogs || []).filter((l) => l.status === 'taken').length;
-    const medMissed = (medLogs || []).filter((l) => l.status === 'missed').length;
-    const medSkipped = (medLogs || []).filter((l) => l.status === 'skipped').length;
-    const taskDone = (taskComps || []).filter((c) => c.status === 'completed').length;
-    const taskMissed = (taskComps || []).filter((c) => c.status === 'missed').length;
+    const requestError = [medLogsError, taskCompsError, moodError, medsError, medicationSchedulesError, tasksError].find(Boolean);
+    if (requestError) throw requestError;
+
 
     const dailyMood = {};
     (moodData || []).forEach((m) => {
@@ -102,37 +83,29 @@ export default function WeeklyReportScreen({ route }) {
       avgMoodByDay[day] = avg;
     });
 
-    const totalMedSlots = expectedSlots(meds, medicationSchedules, now);
-    const totalTaskSlots = (tasks || []).reduce((total, task) => {
-      const configuredDays = Array.isArray(task.days) ? task.days : [];
-      if (!configuredDays.length) return total + 7;
-      return total + Array.from({ length: 7 }, (_, index) => SCHEDULE_DAYS[index])
-        .filter((day) => configuredDays.includes(day)).length;
-    }, 0);
+    const totals = reportTotals(meds, medicationSchedules, tasks, medLogs, taskComps, now);
 
     setReport({
-      medTaken,
-      medMissed,
-      medSkipped,
-      taskDone,
-      taskMissed,
-      totalMedSlots,
-      totalTaskSlots,
+      ...totals,
       avgMoodByDay,
       moodCount: (moodData || []).length,
     });
+    setLoadError('');
+    } catch (error) {
+      setLoadError(error.message || 'Could not load the weekly report. Pull down to try again.');
+    }
   };
 
-  useEffect(() => { fetchReport(); }, [patientId]);
+  useFocusEffect(useCallback(() => { fetchReport(); }, [patientId]));
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchReport();
-    setRefreshing(false);
+    try { await fetchReport(); } finally { setRefreshing(false); }
   };
 
   if (!fontsLoaded) return <FontProvider />;
-  if (!report) return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text>Loading...</Text></View>;
+  if (loadError && !report) return <View style={{ flex: 1, justifyContent: 'center', padding: s(24) }}><Text style={{ color: '#C0392B', marginBottom: s(12) }}>{loadError}</Text><Text onPress={fetchReport} style={{ color: NAVY }}>Try again</Text></View>;
+  if (!report) return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text>Loading</Text></View>;
 
   const medRate = report.totalMedSlots > 0 ? Math.round((report.medTaken / report.totalMedSlots) * 100) : 0;
   const taskRate = report.totalTaskSlots > 0 ? Math.round((report.taskDone / report.totalTaskSlots) * 100) : 0;
@@ -152,37 +125,38 @@ export default function WeeklyReportScreen({ route }) {
     >
       <View style={{ padding: s(20) }}>
         <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY, marginBottom: s(20) }}>Weekly Report</Text>
+        {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(12) }}>{loadError} Showing the last loaded report.</Text>}
 
-        <View style={{ backgroundColor: '#F0F4FF', borderRadius: 12, padding: s(16), marginBottom: s(12) }}>
+        <View style={{ backgroundColor: SURFACE, borderRadius: 6, padding: s(16), marginBottom: s(12) }}>
           <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY, marginBottom: s(8) }}>Medications</Text>
           <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#333' }}>
             Taken: {report.medTaken} | Missed: {report.medMissed} | Skipped: {report.medSkipped}
           </Text>
           <View style={{ height: 8, backgroundColor: '#E0E0E0', borderRadius: 4, marginTop: s(8), overflow: 'hidden' }}>
-            <View style={{ height: '100%', width: `${medRate}%`, backgroundColor: medRate >= 80 ? '#4CAF50' : medRate >= 50 ? '#FF9800' : '#F44336', borderRadius: 4 }} />
+            <View style={{ height: '100%', width: `${medRate}%`, backgroundColor: medRate >= 80 ? NAVY : medRate >= 50 ? '#FF9800' : '#F44336', borderRadius: 4 }} />
           </View>
           <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: NAVY, marginTop: s(4) }}>{medRate}% completion</Text>
         </View>
 
-        <View style={{ backgroundColor: '#F0F4FF', borderRadius: 12, padding: s(16), marginBottom: s(12) }}>
+        <View style={{ backgroundColor: SURFACE, borderRadius: 6, padding: s(16), marginBottom: s(12) }}>
           <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY, marginBottom: s(8) }}>Tasks</Text>
           <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#333' }}>
             Done: {report.taskDone} | Missed: {report.taskMissed}
           </Text>
           <View style={{ height: 8, backgroundColor: '#E0E0E0', borderRadius: 4, marginTop: s(8), overflow: 'hidden' }}>
-            <View style={{ height: '100%', width: `${taskRate}%`, backgroundColor: taskRate >= 80 ? '#4CAF50' : taskRate >= 50 ? '#FF9800' : '#F44336', borderRadius: 4 }} />
+            <View style={{ height: '100%', width: `${taskRate}%`, backgroundColor: taskRate >= 80 ? NAVY : taskRate >= 50 ? '#FF9800' : '#F44336', borderRadius: 4 }} />
           </View>
           <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: NAVY, marginTop: s(4) }}>{taskRate}% completion</Text>
         </View>
 
-        <View style={{ backgroundColor: '#F0F4FF', borderRadius: 12, padding: s(16), marginBottom: s(12) }}>
+        <View style={{ backgroundColor: SURFACE, borderRadius: 6, padding: s(16), marginBottom: s(12) }}>
           <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY, marginBottom: s(8) }}>Mood This Week</Text>
           {report.moodCount === 0 ? (
             <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No mood entries</Text>
           ) : (
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
               {DAYS.map((day, i) => (
-                <View key={i} style={{ alignItems: 'center' }}>
+                <View key={i} style={{ alignItems: 'center', flex: 1 }}>
                   <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(11), color: '#666' }}>{day}</Text>
                   <Text style={{ fontSize: s(20), marginTop: s(4) }}>
                     {report.avgMoodByDay[i] ? getMoodEmoji(report.avgMoodByDay[i]) : '—'}

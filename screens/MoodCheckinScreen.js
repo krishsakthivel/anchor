@@ -1,26 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+const { MOODS } = require('../lib/careValues');
+import { appAlert as Alert } from '../components/AppDialog';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   useWindowDimensions,
   TouchableOpacity,
   TextInput,
-  Alert,
   ScrollView,
   RefreshControl,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import useCustomFonts from '../lib/useCustomFonts';
 import Button from '../components/Button';
-import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
+import { NAVY, WHITE, PLACEHOLDER, SURFACE } from '../theme/colors';
 
-const MOODS = [
-  { value: 1, emoji: '🤒', label: 'Very Bad' },
-  { value: 2, emoji: '😢', label: 'Bad' },
-  { value: 3, emoji: '😟', label: 'Okay' },
-  { value: 4, emoji: '😐', label: 'Good' },
-  { value: 5, emoji: '😊', label: 'Great' },
-];
 
 export default function MoodCheckinScreen({ route }) {
   const { patientId, isPatient } = route.params;
@@ -30,28 +25,34 @@ export default function MoodCheckinScreen({ route }) {
   const [selectedMood, setSelectedMood] = useState(null);
   const [moodNote, setMoodNote] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const scale = width / 375;
+  const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
   const fetchMoods = async () => {
-    const { data } = await supabase
+    try {
+    const { data, error } = await supabase
       .from('mood_logs')
       .select('*')
       .eq('patient_id', patientId)
       .order('logged_at', { ascending: false })
       .limit(30);
 
+    if (error) throw error;
     setMoodLogs(data || []);
+    setLoadError('');
+    } catch (error) { setLoadError(error.message || 'Could not load mood. Please refresh to try again.'); }
   };
 
-  useEffect(() => { fetchMoods(); }, [patientId]);
+  useFocusEffect(useCallback(() => { fetchMoods(); }, [patientId]));
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchMoods();
-    setRefreshing(false);
+    try { await fetchMoods();
+    } catch (error) { Alert.alert('Could not refresh', error.message || 'Please try again.'); }
+    finally { setRefreshing(false); }
   };
 
   if (!fontsLoaded) return <FontProvider />;
@@ -59,6 +60,7 @@ export default function MoodCheckinScreen({ route }) {
   const handleLogMood = async () => {
     if (!selectedMood) return;
     setLoading(true);
+    try {
 
     const { error } = await supabase
       .from('mood_logs')
@@ -78,6 +80,9 @@ export default function MoodCheckinScreen({ route }) {
     setMoodNote('');
     Alert.alert('Logged', 'Your mood has been recorded.');
     fetchMoods();
+    } catch (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+    } finally { setLoading(false); }
   };
 
   const todayStart = new Date();
@@ -97,9 +102,11 @@ export default function MoodCheckinScreen({ route }) {
     const d = new Date();
     d.setDate(d.getDate() - i);
     d.setHours(0, 0, 0, 0);
+    const nextDay = new Date(d);
+    nextDay.setDate(nextDay.getDate() + 1);
     const dayMoods = moodLogs.filter((m) => {
       const ml = new Date(m.logged_at);
-      return ml >= d && ml < new Date(d.getTime() + 86400000);
+      return ml >= d && ml < nextDay;
     });
     const avg = dayMoods.length > 0 ? dayMoods.reduce((a, b) => a + b.mood, 0) / dayMoods.length : null;
     last7Days.push({
@@ -115,6 +122,7 @@ export default function MoodCheckinScreen({ route }) {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
       <View style={{ padding: s(20) }}>
+          {!!loadError && <Text accessibilityRole="alert" style={{ color: '#C0392B', marginBottom: s(12) }}>{loadError}</Text>}
         <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY, marginBottom: s(20) }}>Mood</Text>
 
         {isPatient && !alreadyLoggedToday && (
@@ -133,8 +141,8 @@ export default function MoodCheckinScreen({ route }) {
                   style={{
                     alignItems: 'center',
                     padding: s(10),
-                    borderRadius: 12,
-                    backgroundColor: selectedMood === m.value ? '#F0F4FF' : 'transparent',
+                    borderRadius: 6,
+                    backgroundColor: selectedMood === m.value ? SURFACE : 'transparent',
                     borderWidth: selectedMood === m.value ? 2 : 0,
                     borderColor: NAVY,
                   }}
@@ -154,7 +162,7 @@ export default function MoodCheckinScreen({ route }) {
             />
 
             <Button
-              title={loading ? 'Logging...' : 'Log Mood'}
+              title={loading ? 'Logging' : 'Log Mood'}
               onPress={handleLogMood}
               disabled={!selectedMood || loading}
               loading={loading}
@@ -163,7 +171,7 @@ export default function MoodCheckinScreen({ route }) {
         )}
 
         {isPatient && alreadyLoggedToday && (
-          <View style={{ backgroundColor: '#F0F4FF', padding: s(14), borderRadius: 8, marginBottom: s(20) }}>
+          <View style={{ backgroundColor: SURFACE, padding: s(14), borderRadius: 6, marginBottom: s(20) }}>
             <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}>
               You've logged your mood for today ✓
             </Text>
@@ -194,7 +202,7 @@ export default function MoodCheckinScreen({ route }) {
               <Text style={{ fontSize: s(24), marginRight: s(12) }}>{getMoodEmoji(log.mood)}</Text>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}>{getMoodLabel(log.mood)}</Text>
-                {log.note && (
+                {!!log.note && (
                   <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{log.note}</Text>
                 )}
               </View>

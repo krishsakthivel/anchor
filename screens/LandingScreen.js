@@ -50,7 +50,7 @@ export default function LandingScreen({ navigation }) {
   }, []);
 
 
-  const scale = width / 375;
+  const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
   return (
@@ -66,7 +66,7 @@ export default function LandingScreen({ navigation }) {
             resizeMode="contain"
           />
           <Text style={[styles.tagline, { fontSize: s(19), lineHeight: s(27), paddingHorizontal: s(10) }]}>
-            Your daily routine, with your caregiver close by.
+            Make your life simple, with your caregiver next to you.
           </Text>
         </Animated.View>
 

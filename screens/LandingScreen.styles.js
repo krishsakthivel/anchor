@@ -8,7 +8,11 @@ export default StyleSheet.create({
     paddingHorizontal: '7%',
   },
   centerContent: {
-    flex: 1,
+    flexGrow: 1,
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
+    paddingVertical: 24,
     justifyContent: 'center',
   },
   hero: {

@@ -1,0 +1,3 @@
+[functions.send-safety-notifications]
+# The function validates user JWTs itself, or a server-only dispatch secret.
+verify_jwt = false

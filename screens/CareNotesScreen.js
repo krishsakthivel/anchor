@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { appAlert as Alert } from '../components/AppDialog';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,7 +10,7 @@ import {
   TouchableOpacity,
   TextInput,
   Modal,
-  Alert,
+  ScrollView,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -17,12 +19,13 @@ import useCustomFonts from '../lib/useCustomFonts';
 import Button from '../components/Button';
 import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
 
-export default function CareNotesScreen({ route }) {
+export default function CareNotesScreen({ route, navigation }) {
   const { patientId, patientName, isPatient } = route.params;
   const { width } = useWindowDimensions();
   const { fontsLoaded, FontProvider } = useCustomFonts();
   const [notes, setNotes] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [addVisible, setAddVisible] = useState(false);
   const [noteTitle, setNoteTitle] = useState('');
   const [noteBody, setNoteBody] = useState('');
@@ -32,22 +35,27 @@ export default function CareNotesScreen({ route }) {
   const s = (size) => Math.round(size * scale);
 
   const fetchNotes = async () => {
-    const { data } = await supabase
+    try {
+    const { data, error } = await supabase
       .from('care_notes')
       .select('*')
       .eq('patient_id', patientId)
       .order('pinned', { ascending: false })
       .order('created_at', { ascending: false });
 
+    if (error) throw error;
     setNotes(data || []);
+    setLoadError('');
+    } catch (error) { setLoadError(error.message || 'Could not load care notes. Please refresh to try again.'); }
   };
 
-  useEffect(() => { fetchNotes(); }, [patientId]);
+  useFocusEffect(useCallback(() => { fetchNotes(); }, [patientId]));
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchNotes();
-    setRefreshing(false);
+    try { await fetchNotes();
+    } catch (error) { Alert.alert('Could not refresh', error.message || 'Please try again.'); }
+    finally { setRefreshing(false); }
   };
 
   if (!fontsLoaded) return <FontProvider />;
@@ -55,6 +63,7 @@ export default function CareNotesScreen({ route }) {
   const handleAddNote = async () => {
     if (!noteTitle.trim() || !noteBody.trim()) return;
     setLoading(true);
+    try {
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -81,14 +90,20 @@ export default function CareNotesScreen({ route }) {
     setNoteTitle('');
     setNoteBody('');
     fetchNotes();
+    } catch (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+    } finally { setLoading(false); }
   };
 
   const handleTogglePin = async (note) => {
-    await supabase
+    try {
+    const { error } = await supabase
       .from('care_notes')
       .update({ pinned: !note.pinned })
       .eq('id', note.id);
-    fetchNotes();
+    if (error) { Alert.alert('Could not pin note', error.message || 'Please try again.'); return; }
+    await fetchNotes();
+    } catch (error) { Alert.alert('Could not update', error.message || 'Please try again.'); }
   };
 
   const handleDelete = async (noteId) => {
@@ -98,8 +113,9 @@ export default function CareNotesScreen({ route }) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await supabase.from('care_notes').delete().eq('id', noteId);
-          fetchNotes();
+          const { error } = await supabase.from('care_notes').delete().eq('id', noteId);
+          if (error) { Alert.alert('Could not delete note', error.message || 'Please try again.'); return; }
+          await fetchNotes();
         },
       },
     ]);
@@ -111,8 +127,9 @@ export default function CareNotesScreen({ route }) {
       renderItem={null}
       ListHeaderComponent={
         <View style={{ padding: s(20) }}>
-          <TouchableOpacity onPress={() => {}} style={{ marginBottom: s(16) }}>
-            <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}></Text>
+          {!!loadError && <Text accessibilityRole="alert" style={{ color: '#C0392B', marginBottom: s(12) }}>{loadError}</Text>}
+          <TouchableOpacity onPress={() => navigation.goBack()} accessibilityRole="button" style={{ marginBottom: s(16) }}>
+            <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}>← Back</Text>
           </TouchableOpacity>
 
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: s(16) }}>
@@ -167,9 +184,9 @@ export default function CareNotesScreen({ route }) {
       }
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListFooterComponent={
-        <Modal visible={addVisible} animationType="slide" transparent>
+        <Modal onRequestClose={() => { if (loading) return; setAddVisible(false); }} visible={addVisible} animationType="slide" transparent>
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+            <ScrollView style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: s(24) }} keyboardShouldPersistTaps="handled">
             <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%', maxWidth: 440 }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Note</Text>
 
@@ -185,17 +202,17 @@ export default function CareNotesScreen({ route }) {
               <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Note</Text>
               <TextInput
                 style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, height: s(100), textAlignVertical: 'top', marginBottom: s(16) }}
-                placeholder="Write your note here..."
+                placeholder="Write your note here"
                 placeholderTextColor={PLACEHOLDER}
                 value={noteBody}
                 onChangeText={setNoteBody}
                 multiline
               />
 
-              <Button title={loading ? 'Adding...' : 'Add Note'} onPress={handleAddNote} disabled={!noteTitle.trim() || !noteBody.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
+              <Button title={loading ? 'Adding' : 'Add Note'} onPress={handleAddNote} disabled={!noteTitle.trim() || !noteBody.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
               <Button title="Cancel" onPress={() => { setAddVisible(false); setNoteTitle(''); setNoteBody(''); }} style={{ backgroundColor: '#999' }} />
             </View>
-            </View>
+            </ScrollView>
           </KeyboardAvoidingView>
         </Modal>
       }

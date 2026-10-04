@@ -1,3 +1,4 @@
+import { signOutWithCleanup } from '../lib/session';
 import React, { useEffect, useState } from 'react';
 import {
   Linking,
@@ -12,14 +13,8 @@ import Button from '../components/Button';
 import { supabase } from '../lib/supabase';
 import { NAVY, PLACEHOLDER, DANGER } from '../theme/colors';
 
-const getHashParams = (url) => {
-  const hash = url?.split('#')[1] || '';
-  return hash.split('&').reduce((params, part) => {
-    const [key, value] = part.split('=');
-    if (key) params[key] = decodeURIComponent(value || '');
-    return params;
-  }, {});
-};
+const { establishRecoverySession } = require('../lib/authRecovery');
+const { withTimeout } = require('../lib/startup');
 
 export default function ResetPasswordScreen({ navigation }) {
   const [password, setPassword] = useState('');
@@ -30,26 +25,22 @@ export default function ResetPasswordScreen({ navigation }) {
 
   useEffect(() => {
     let mounted = true;
+    let generation = 0;
     const establishSession = async (url) => {
-      const params = getHashParams(url);
-      if (params.access_token && params.refresh_token) {
-        const { error: sessionError } = await supabase.auth.setSession({
-          access_token: params.access_token,
-          refresh_token: params.refresh_token,
-        });
-        if (sessionError) {
-          if (mounted) setError('This reset link has expired. Request a new one.');
-          return;
-        }
+      const current = ++generation;
+      if (mounted) { setReady(false); setError(''); }
+      try {
+        const hasSession = await withTimeout(() => establishRecoverySession(supabase.auth, url));
+        if (mounted && current === generation) setReady(hasSession);
+      } catch (error) {
+        if (mounted && current === generation) { setReady(false); setError(error.message || 'Could not open this reset link. Request a new one.'); }
       }
-      const { data: { session } } = await supabase.auth.getSession();
-      if (mounted) setReady(!!session);
     };
 
-    Linking.getInitialURL().then(establishSession);
+    Linking.getInitialURL().then(establishSession).catch(error => { if (mounted) setError(error.message || 'Could not open the reset link.'); });
     const subscription = Linking.addEventListener('url', ({ url }) => establishSession(url));
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY' || session) setReady(true);
+      if (mounted && event === 'SIGNED_OUT') setReady(false);
     });
 
     return () => {
@@ -76,7 +67,7 @@ export default function ResetPasswordScreen({ navigation }) {
         setError(updateError.message || 'Could not update your password.');
         return;
       }
-      await supabase.auth.signOut();
+      await signOutWithCleanup();
       navigation.reset({ index: 0, routes: [{ name: 'CaregiverLogin' }] });
     } catch (err) {
       console.error('password update failed', err);
@@ -112,7 +103,7 @@ export default function ResetPasswordScreen({ navigation }) {
           secureTextEntry
           editable={ready && !loading}
         />
-        <Button title={loading ? 'Saving...' : 'Save new password'} onPress={handleUpdate} disabled={!ready || loading} loading={loading} />
+        <Button title={loading ? 'Saving' : 'Save new password'} onPress={handleUpdate} disabled={!ready || loading} loading={loading} />
       </ScrollView>
     </KeyboardAvoidingView>
   );

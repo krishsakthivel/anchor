@@ -24,14 +24,14 @@ export default function ForgotPasswordScreen({ navigation }) {
   const { width, height } = useWindowDimensions();
 
 
-  const scale = width / 375;
+  const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
   const handleReset = async () => {
     setError('');
     setSuccess(false);
 
-    if (!isValidEmail(email)) {
+    if (!isValidEmail(email.trim())) {
       setError('Please enter a valid email address');
       return;
     }

@@ -1,3 +1,5 @@
+import { signOutWithCleanup } from '../lib/session';
+import { appAlert as Alert } from '../components/AppDialog';
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -7,44 +9,64 @@ import {
   ScrollView,
   TouchableOpacity,
   Modal,
-  Alert,
+  Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
 import { NAVY, WHITE, PLACEHOLDER, MUTED, SURFACE, DANGER } from '../theme/colors';
+import { getElderMode, setElderMode } from '../lib/accessibility';
 
 export default function PatientProfileScreen({ navigation }) {
   const { width } = useWindowDimensions();
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
+  const [profileReady, setProfileReady] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [saveError, setSaveError] = useState('');
   const [signOutVisible, setSignOutVisible] = useState(false);
   const [signOutLoading, setSignOutLoading] = useState(false);
   const [signOutError, setSignOutError] = useState('');
+  const [elderMode, setElderModeState] = useState(false);
 
-  const scale = width / 375;
+  const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
-  useEffect(() => {
-    (async () => {
+  const loadProfile = async () => {
+    setProfileReady(false);
+    setLoadError('');
+    try {
+      setElderModeState(await getElderMode());
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data: profile } = await supabase
+      if (!user) throw new Error('Please sign in again.');
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('full_name, phone')
         .eq('id', user.id)
         .single();
+      if (profileError) throw profileError;
       if (profile) {
         setFullName(profile.full_name || '');
         setPhone(profile.phone || '');
       }
-    })();
-  }, []);
+      setProfileReady(true);
+    } catch (error) { setLoadError(error.message || 'Could not load settings. Please try again.'); }
+  };
+  useEffect(() => { loadProfile(); }, []);
+
+  const handleElderModeChange = async (enabled) => {
+    setElderModeState(enabled);
+    try {
+      await setElderMode(enabled);
+    } catch (error) {
+      setElderModeState(!enabled);
+      Alert.alert('Could not save setting', 'Please try again.');
+    }
+  };
 
   const handleSave = async () => {
-    if (loading) return;
+    if (loading || !profileReady) return;
     setLoading(true);
     setSaveError('');
     try {
@@ -56,10 +78,11 @@ export default function PatientProfileScreen({ navigation }) {
 
       const { error } = await supabase
         .from('profiles')
-        .upsert({ id: user.id, full_name: fullName.trim(), phone: phone.trim() });
+        .update({ full_name: fullName.trim(), phone: phone.trim() })
+        .eq('id', user.id).select('id').single();
 
       if (error) {
-        console.error('profiles upsert failed', error);
+        console.error('profiles update failed', error);
         setSaveError(error.message || 'Could not save. Please try again.');
         return;
       }
@@ -78,12 +101,7 @@ export default function PatientProfileScreen({ navigation }) {
     setSignOutLoading(true);
     setSignOutError('');
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.error('signOut failed', error);
-        setSignOutError(error.message || 'Could not sign out. Please try again.');
-        return;
-      }
+      await signOutWithCleanup();
       navigation.reset({ index: 0, routes: [{ name: 'Landing' }] });
     } catch (err) {
       console.error('handleConfirmSignOut failed', err);
@@ -107,17 +125,38 @@ export default function PatientProfileScreen({ navigation }) {
       </TouchableOpacity>
 
       <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(28), color: NAVY, marginBottom: s(28) }}>
-        My Profile
+        Settings
       </Text>
 
+      {!!loadError && <><Text style={{ color: DANGER }}>{loadError}</Text><Button title="Retry loading settings" onPress={loadProfile} /></>}
       {!!saveError && (
         <View style={{ backgroundColor: '#FDECEA', padding: s(12), borderRadius: 8, marginBottom: s(20) }}>
           <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: DANGER }}>{saveError}</Text>
         </View>
       )}
 
+      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginBottom: s(10) }}>
+        Your details
+      </Text>
+
+      <View style={{ backgroundColor: SURFACE, padding: s(16), borderRadius: 8, marginBottom: s(24), flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ flex: 1, paddingRight: s(12) }}>
+          <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY }}>Elder Mode</Text>
+          <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(15), color: MUTED, marginTop: s(4) }}>
+            Uses larger text and more spacious controls on the home screen.
+          </Text>
+        </View>
+        <Switch
+          value={elderMode}
+          onValueChange={handleElderModeChange}
+          trackColor={{ false: '#D7DCE5', true: '#9BB4D8' }}
+          thumbColor={elderMode ? NAVY : '#FFFFFF'}
+          accessibilityLabel="Elder Mode"
+        />
+      </View>
+
       <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(18), color: NAVY, marginBottom: s(8) }}>
-        Your Name
+        Name
       </Text>
       <TextInput
         style={{
@@ -137,7 +176,7 @@ export default function PatientProfileScreen({ navigation }) {
       />
 
       <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(18), color: NAVY, marginBottom: s(8) }}>
-        Your Phone
+        Phone
       </Text>
       <TextInput
         style={{
@@ -158,14 +197,17 @@ export default function PatientProfileScreen({ navigation }) {
       />
 
       <Button
-        title={loading ? 'Saving...' : 'Save'}
+        title={loading ? 'Saving' : 'Save changes'}
         onPress={handleSave}
-        disabled={loading}
+        disabled={loading || !profileReady}
         loading={loading}
         style={{ paddingVertical: s(18), borderRadius: 8, marginBottom: s(16) }}
         textStyle={{ fontSize: s(20) }}
       />
 
+      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginTop: s(8), marginBottom: s(10) }}>
+        Account
+      </Text>
       <TouchableOpacity
         onPress={() => { setSignOutError(''); setSignOutVisible(true); }}
         style={{
@@ -180,7 +222,7 @@ export default function PatientProfileScreen({ navigation }) {
         </Text>
       </TouchableOpacity>
 
-      <Modal visible={signOutVisible} animationType="fade" transparent>
+      <Modal onRequestClose={() => { if (signOutLoading) return; setSignOutVisible(false); }} visible={signOutVisible} animationType="fade" transparent>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(15,44,107,0.45)' }}>
           <View style={{ backgroundColor: WHITE, borderRadius: 10, padding: s(24), width: '85%' }}>
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(10) }}>
@@ -197,7 +239,7 @@ export default function PatientProfileScreen({ navigation }) {
             )}
 
             <Button
-              title={signOutLoading ? 'Signing Out...' : 'Sign Out'}
+              title={signOutLoading ? 'Signing Out' : 'Sign Out'}
               onPress={handleConfirmSignOut}
               disabled={signOutLoading}
               loading={signOutLoading}

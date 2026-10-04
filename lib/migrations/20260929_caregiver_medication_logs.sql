@@ -1,4 +1,3 @@
--- Run once on existing Supabase projects to let caregivers record doses they give.
 DROP POLICY IF EXISTS "Caregivers record patient medication logs" ON medication_log;
 CREATE POLICY "Caregivers record patient medication logs"
   ON medication_log FOR INSERT

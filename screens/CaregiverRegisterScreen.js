@@ -25,13 +25,13 @@ export default function CaregiverRegisterScreen({ navigation }) {
   const { width, height } = useWindowDimensions();
 
 
-  const scale = width / 375;
+  const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
 
   const handleRegister = async () => {
     setError('');
 
-    if (!isValidEmail(email)) {
+    if (!isValidEmail(email.trim())) {
       setError('Please enter a valid email address');
       return;
     }
@@ -121,7 +121,7 @@ export default function CaregiverRegisterScreen({ navigation }) {
             styles.input,
             { fontSize: s(16), paddingVertical: s(12), paddingHorizontal: s(14), marginBottom: height * 0.02 },
           ]}
-          placeholder="••••••••"
+          placeholder="Password"
           placeholderTextColor={PLACEHOLDER}
           value={password}
           onChangeText={setPassword}
@@ -134,7 +134,7 @@ export default function CaregiverRegisterScreen({ navigation }) {
             styles.input,
             { fontSize: s(16), paddingVertical: s(12), paddingHorizontal: s(14), marginBottom: height * 0.02 },
           ]}
-          placeholder="••••••••"
+          placeholder="Repeat password"
           placeholderTextColor={PLACEHOLDER}
           value={confirmPassword}
           onChangeText={setConfirmPassword}

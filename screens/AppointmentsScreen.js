@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { appAlert as Alert } from '../components/AppDialog';
+import { useFocusEffect } from '@react-navigation/native';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,7 +10,6 @@ import {
   TouchableOpacity,
   TextInput,
   Modal,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -17,7 +18,7 @@ import { supabase } from '../lib/supabase';
 import useCustomFonts from '../lib/useCustomFonts';
 import Button from '../components/Button';
 import TimePickerInput from '../components/TimePickerInput';
-import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
+import { NAVY, WHITE, PLACEHOLDER, SURFACE } from '../theme/colors';
 
 export default function AppointmentsScreen({ route, navigation }) {
   const { patientId, isPatient } = route.params;
@@ -39,6 +40,7 @@ export default function AppointmentsScreen({ route, navigation }) {
   const s = (size) => Math.round(size * scale);
 
   const fetchAppointments = async () => {
+    try {
     const { data, error } = await supabase
       .from('appointments')
       .select('*')
@@ -51,14 +53,16 @@ export default function AppointmentsScreen({ route, navigation }) {
     }
     setLoadError('');
     setAppointments(data || []);
+    } catch (error) { setLoadError(error.message || 'Could not load appointments. Please refresh.'); }
   };
 
-  useEffect(() => { fetchAppointments(); }, [patientId]);
+  useFocusEffect(useCallback(() => { fetchAppointments(); }, [patientId]));
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchAppointments();
-    setRefreshing(false);
+    try { await fetchAppointments();
+    } catch (error) { Alert.alert('Could not refresh', error.message || 'Please try again.'); }
+    finally { setRefreshing(false); }
   };
 
   if (!fontsLoaded) return <FontProvider />;
@@ -66,6 +70,7 @@ export default function AppointmentsScreen({ route, navigation }) {
   const handleAdd = async () => {
     if (!title.trim() || !date.trim() || !time.trim()) return;
     setLoading(true);
+    try {
 
     const dateStr = date.trim();
     const timeStr = time.trim();
@@ -76,7 +81,8 @@ export default function AppointmentsScreen({ route, navigation }) {
       || !/^\d{2}:\d{2}$/.test(timeStr)
       || hour > 23 || minute > 59
       || isNaN(parsed.getTime())
-      || parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
+      || parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day
+      || parsed.getHours() !== hour || parsed.getMinutes() !== minute) {
       setLoading(false);
       Alert.alert('Invalid date or time', 'Please use YYYY-MM-DD for the date and HH:MM for the time.');
       return;
@@ -116,15 +122,20 @@ export default function AppointmentsScreen({ route, navigation }) {
     setTime('');
     setNotes('');
     fetchAppointments();
+    } catch (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+    } finally { setLoading(false); }
   };
 
   const handleComplete = async (appt) => {
+    try {
     const { error } = await supabase
       .from('appointments')
       .update({ completed: true })
       .eq('id', appt.id);
     if (error) { Alert.alert('Could not update appointment', error.message || 'Please try again.'); return; }
     fetchAppointments();
+    } catch (error) { Alert.alert('Could not update', error.message || 'Please try again.'); }
   };
 
   const handleDelete = async (apptId) => {
@@ -178,7 +189,7 @@ export default function AppointmentsScreen({ route, navigation }) {
                   <TouchableOpacity
                     key={appt.id}
                     onLongPress={() => !isPatient && handleDelete(appt.id)}
-                    style={{ backgroundColor: '#F0F4FF', padding: s(14), borderRadius: 8, marginBottom: s(8) }}
+                    style={{ backgroundColor: SURFACE, padding: s(14), borderRadius: 6, marginBottom: s(8) }}
                   >
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                       <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, flex: 1 }}>{appt.title}</Text>
@@ -188,16 +199,16 @@ export default function AppointmentsScreen({ route, navigation }) {
                         </TouchableOpacity>
                       )}
                     </View>
-                    {appt.doctor && (
+                    {!!appt.doctor && (
                       <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#333', marginTop: s(2) }}>Dr. {appt.doctor}</Text>
                     )}
-                    {appt.location && (
+                    {!!appt.location && (
                       <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666', marginTop: s(2) }}>📍 {appt.location}</Text>
                     )}
                     <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#999', marginTop: s(4) }}>
                       {dt.toLocaleDateString()} at {dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </Text>
-                    {appt.notes && (
+                    {!!appt.notes && (
                       <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666', marginTop: s(4) }}>{appt.notes}</Text>
                     )}
                   </TouchableOpacity>
@@ -228,7 +239,7 @@ export default function AppointmentsScreen({ route, navigation }) {
       }
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListFooterComponent={
-        <Modal visible={addVisible} animationType="slide" transparent>
+        <Modal onRequestClose={() => { if (loading) return; setAddVisible(false); }} visible={addVisible} animationType="slide" transparent>
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
             <ScrollView
               style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}
@@ -285,7 +296,7 @@ export default function AppointmentsScreen({ route, navigation }) {
                 onChangeText={setNotes}
               />
 
-              <Button title={loading ? 'Adding...' : 'Add Appointment'} onPress={handleAdd} disabled={!title.trim() || !date.trim() || !time.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
+              <Button title={loading ? 'Adding' : 'Add Appointment'} onPress={handleAdd} disabled={!title.trim() || !date.trim() || !time.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
               <Button title="Cancel" onPress={() => { setAddVisible(false); setTitle(''); setDoctor(''); setLocation(''); setDate(''); setTime(''); setNotes(''); }} style={{ backgroundColor: '#999' }} />
             </View>
             </ScrollView>

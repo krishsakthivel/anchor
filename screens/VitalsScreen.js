@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+const { isValidVitalValue } = require('../lib/careValues');
+import { appAlert as Alert } from '../components/AppDialog';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,7 +11,6 @@ import {
   TouchableOpacity,
   TextInput,
   Modal,
-  Alert,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
@@ -16,7 +18,7 @@ import {
 import { supabase } from '../lib/supabase';
 import useCustomFonts from '../lib/useCustomFonts';
 import Button from '../components/Button';
-import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
+import { NAVY, WHITE, PLACEHOLDER, SURFACE } from '../theme/colors';
 
 const VITAL_TYPES = [
   { key: 'blood_pressure', label: 'Blood Pressure', unit: 'mmHg', placeholder: '120/80' },
@@ -27,11 +29,6 @@ const VITAL_TYPES = [
   { key: 'oxygen', label: 'Oxygen Level', unit: '%', placeholder: '98' },
 ];
 
-const isValidVitalValue = (type, value) => {
-  const trimmed = value.trim();
-  if (type === 'blood_pressure') return /^\d{2,3}\s*\/\s*\d{2,3}$/.test(trimmed);
-  return /^\d+(\.\d+)?$/.test(trimmed) && Number(trimmed) > 0;
-};
 
 export default function VitalsScreen({ route }) {
   const { patientId, isPatient } = route.params;
@@ -39,6 +36,7 @@ export default function VitalsScreen({ route }) {
   const { fontsLoaded, FontProvider } = useCustomFonts();
   const [vitals, setVitals] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [addVisible, setAddVisible] = useState(false);
   const [selectedType, setSelectedType] = useState(null);
   const [vitalValue, setVitalValue] = useState('');
@@ -49,22 +47,27 @@ export default function VitalsScreen({ route }) {
   const s = (size) => Math.round(size * scale);
 
   const fetchVitals = async () => {
-    const { data } = await supabase
+    try {
+    const { data, error } = await supabase
       .from('vital_signs')
       .select('*')
       .eq('patient_id', patientId)
       .order('logged_at', { ascending: false })
       .limit(50);
 
+    if (error) throw error;
     setVitals(data || []);
+    setLoadError('');
+    } catch (error) { setLoadError(error.message || 'Could not load vitals. Please refresh to try again.'); }
   };
 
-  useEffect(() => { fetchVitals(); }, [patientId]);
+  useFocusEffect(useCallback(() => { fetchVitals(); }, [patientId]));
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchVitals();
-    setRefreshing(false);
+    try { await fetchVitals();
+    } catch (error) { Alert.alert('Could not refresh', error.message || 'Please try again.'); }
+    finally { setRefreshing(false); }
   };
 
   if (!fontsLoaded) return <FontProvider />;
@@ -81,6 +84,7 @@ export default function VitalsScreen({ route }) {
       return;
     }
     setLoading(true);
+    try {
 
     const { error } = await supabase
       .from('vital_signs')
@@ -103,6 +107,9 @@ export default function VitalsScreen({ route }) {
     setVitalValue('');
     setVitalNote('');
     fetchVitals();
+    } catch (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+    } finally { setLoading(false); }
   };
 
   const getTypeIcon = (type) => {
@@ -135,6 +142,7 @@ export default function VitalsScreen({ route }) {
       renderItem={null}
       ListHeaderComponent={
         <View style={{ padding: s(20) }}>
+          {!!loadError && <Text accessibilityRole="alert" style={{ color: '#C0392B', marginBottom: s(12) }}>{loadError}</Text>}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: s(16) }}>
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY }}>Vitals</Text>
             {isPatient && (
@@ -151,7 +159,7 @@ export default function VitalsScreen({ route }) {
             </Text>
           ) : (
             getLatestByType().map((v) => (
-              <View key={v.id} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0F4FF', padding: s(12), borderRadius: 8, marginBottom: s(8) }}>
+              <View key={v.id} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: SURFACE, padding: s(12), borderRadius: 6, marginBottom: s(8) }}>
                 <Text style={{ fontSize: s(24), marginRight: s(12) }}>{getTypeIcon(v.type)}</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}>{getTypeLabel(v.type)}</Text>
@@ -185,9 +193,9 @@ export default function VitalsScreen({ route }) {
       }
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListFooterComponent={
-        <Modal visible={addVisible} animationType="slide" transparent>
+        <Modal onRequestClose={() => { if (loading) return; setAddVisible(false); }} visible={addVisible} animationType="slide" transparent>
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+            <ScrollView style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: s(24) }} keyboardShouldPersistTaps="handled">
             <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%', maxWidth: 440 }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Log Vital</Text>
 
@@ -201,7 +209,7 @@ export default function VitalsScreen({ route }) {
                     accessibilityLabel={`Select ${type.label}`}
                     accessibilityState={{ selected: selectedType?.key === type.key }}
                     style={{
-                      backgroundColor: selectedType?.key === type.key ? NAVY : '#F0F4FF',
+                      backgroundColor: selectedType?.key === type.key ? NAVY : SURFACE,
                       paddingHorizontal: s(12),
                       paddingVertical: s(10),
                       borderRadius: 6,
@@ -247,10 +255,10 @@ export default function VitalsScreen({ route }) {
                 </>
               )}
 
-              <Button title={loading ? 'Logging...' : 'Log Vital'} onPress={handleAddVital} disabled={!selectedType || !vitalValue.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
+              <Button title={loading ? 'Logging' : 'Log Vital'} onPress={handleAddVital} disabled={!selectedType || !vitalValue.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
               <Button title="Cancel" onPress={() => { setAddVisible(false); setSelectedType(null); setVitalValue(''); setVitalNote(''); }} style={{ backgroundColor: '#999' }} />
             </View>
-            </View>
+            </ScrollView>
           </KeyboardAvoidingView>
         </Modal>
       }

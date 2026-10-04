@@ -1,3 +1,8 @@
+import useTabLoader, { TabRefreshContext } from '../lib/useTabLoader';
+const { MOODS } = require('../lib/careValues');
+const { medicationLogError } = require('../lib/medicationLogError');
+const { reportWindow, reportTotals } = require('../lib/reportWindow');
+import { appAlert as Alert } from '../components/AppDialog';
 import React, { useState, useEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -7,7 +12,6 @@ import {
   useWindowDimensions,
   RefreshControl,
   TouchableOpacity,
-  Alert,
   TextInput,
   Modal,
   ScrollView,
@@ -15,9 +19,11 @@ import {
   Platform,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+import * as Crypto from 'expo-crypto';
 import Button from '../components/Button';
 import TimePickerInput from '../components/TimePickerInput';
-import { NAVY, WHITE, PLACEHOLDER } from '../theme/colors';
+import { writeLocationTag } from '../lib/nfc';
+import { NAVY, WHITE, PLACEHOLDER, SURFACE } from '../theme/colors';
 import { displayTime, planLabels } from '../lib/dailyPlan';
 const { localDateKey } = require('../lib/localDate');
 
@@ -36,6 +42,11 @@ export default function PatientDetailScreen({ route, navigation }) {
   const [loggingId, setLoggingId] = useState(null);
   const [actionError, setActionError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const tabRefresh = React.useRef(null);
+  const registerRefresh = React.useCallback((loader) => {
+    tabRefresh.current = loader;
+    return () => { if (tabRefresh.current === loader) tabRefresh.current = null; };
+  }, []);
   const [addMedVisible, setAddMedVisible] = useState(false);
   const [addTaskVisible, setAddTaskVisible] = useState(false);
   const [medName, setMedName] = useState('');
@@ -53,6 +64,7 @@ export default function PatientDetailScreen({ route, navigation }) {
   const s = (size) => Math.round(size * scale);
 
   const fetchData = async () => {
+    try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const { data: meds, error: medsError } = await supabase
@@ -72,18 +84,20 @@ export default function PatientDetailScreen({ route, navigation }) {
 
     if (medsError || tasksError || scheduleError || logError) {
       console.error('patient detail fetch failed', medsError || tasksError || scheduleError || logError);
-      Alert.alert('Error', 'Could not load this care plan. Pull down to try again.');
+      setActionError('Could not load this care plan. Pull down to try again.');
       return;
     }
+    setActionError('');
     setMedications(meds || []);
     setTasks(taskData || []);
     setSchedules(scheduleRows || []);
     setMedLogs(logRows || []);
+    } catch (error) { setActionError(error.message || 'Could not load this care plan. Please refresh.'); }
   };
 
   const logMedicine = async (med, schedule, status) => {
     const slotId = schedule?.id || med.id;
-    if (loggingId) return;
+    if (loggingId || !canEdit) return;
     setLoggingId(slotId);
     setActionError('');
     try {
@@ -93,18 +107,22 @@ export default function PatientDetailScreen({ route, navigation }) {
       if (error) throw error;
       await fetchData();
     } catch (error) {
-      setActionError(error.message || 'Could not record this medicine. Please try again.');
+      setActionError(medicationLogError(error));
     } finally {
       setLoggingId(null);
     }
   };
 
-  useEffect(() => { fetchData(); }, [patientId]);
+  useFocusEffect(React.useCallback(() => { fetchData(); }, [patientId]));
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchData();
-    setRefreshing(false);
+    try {
+      await fetchData();
+      await tabRefresh.current?.();
+    } catch (error) {
+      setActionError(error.message || 'Could not refresh. Please try again.');
+    } finally { setRefreshing(false); }
   };
 
 
@@ -119,6 +137,7 @@ export default function PatientDetailScreen({ route, navigation }) {
       return;
     }
     setLoading(true);
+    try {
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -162,7 +181,7 @@ export default function PatientDetailScreen({ route, navigation }) {
           patient_id: patientId,
           time: enteredTime,
           frequency: 'daily',
-          days: JSON.stringify(DAYS),
+          days: DAYS,
         });
 
       if (scheduleError) {
@@ -183,11 +202,15 @@ export default function PatientDetailScreen({ route, navigation }) {
     setMedTotalPills('');
     setMedPillsRemaining('');
     fetchData();
+    } catch (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+    } finally { setLoading(false); }
   };
 
   const handleAddTask = async () => {
     if (!taskTitle.trim()) return;
     setLoading(true);
+    try {
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -211,7 +234,7 @@ export default function PatientDetailScreen({ route, navigation }) {
         description: taskDesc.trim() || null,
         time: enteredTime || null,
         frequency: 'daily',
-        days: JSON.stringify(DAYS),
+        days: DAYS,
         created_by: user.id,
       });
 
@@ -226,6 +249,9 @@ export default function PatientDetailScreen({ route, navigation }) {
     setTaskDesc('');
     setTaskTime('');
     fetchData();
+    } catch (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+    } finally { setLoading(false); }
   };
 
   const handleDeleteMed = async (medId) => {
@@ -283,7 +309,7 @@ export default function PatientDetailScreen({ route, navigation }) {
         onPress: async () => {
           const { error } = await supabase
             .from('medications')
-            .update({ pills_remaining: med.total_pills || 30 })
+            .update({ pills_remaining: med.total_pills ?? 30 })
             .eq('id', med.id);
           if (error) Alert.alert('Error', error.message || 'Could not update the pill count.');
           else await fetchData();
@@ -311,11 +337,11 @@ export default function PatientDetailScreen({ route, navigation }) {
                 <TouchableOpacity
                   key={med.id}
                   onLongPress={() => canEdit && handleDeleteMed(med.id)}
-                  style={{ backgroundColor: '#F0F4FF', padding: s(12), borderRadius: 8, marginBottom: s(8) }}
+                  style={{ backgroundColor: SURFACE, padding: s(12), borderRadius: 6, marginBottom: s(8) }}
                 >
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(15), color: NAVY }}>{med.name}</Text>
-                  {med.dosage && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{med.dosage}</Text>}
-                  {med.instructions && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#999' }}>{med.instructions}</Text>}
+                  {!!med.dosage && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{med.dosage}</Text>}
+                  {!!med.instructions && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#999' }}>{med.instructions}</Text>}
                   {(() => {
                     const medSchedules = schedules.filter((schedule) => schedule.medication_id === med.id);
                     const day = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
@@ -325,18 +351,18 @@ export default function PatientDetailScreen({ route, navigation }) {
                       const log = medLogs.find((entry) => entry.medication_id === med.id && entry.schedule_id === (schedule?.id || null));
                       const timeLabel = schedule?.time ? displayTime(String(schedule.time).slice(0, 5)) : 'Any time today';
                       return <View key={schedule?.id || med.id} style={{ marginTop: s(10), paddingTop: s(9), borderTopWidth: 1, borderTopColor: '#DCE4F2' }}>
-                        <Text style={{ color: NAVY, fontFamily: 'DMSans_500Medium' }}>{timeLabel} · {log ? `Marked ${log.status}` : 'Due today'}</Text>
+                        <Text style={{ color: NAVY, fontFamily: 'DMSans_500Medium' }}>{timeLabel}, {log ? `Marked ${log.status}` : 'Due today'}</Text>
                         {canEdit && !log && <View style={{ flexDirection: 'row', marginTop: s(8) }}>
                           {['taken', 'skipped', 'missed'].map((status) => <TouchableOpacity key={status} disabled={!!loggingId} onPress={() => logMedicine(med, schedule, status)} accessibilityRole="button" style={{ backgroundColor: status === 'taken' ? NAVY : '#E5EAF5', paddingVertical: s(9), paddingHorizontal: s(11), borderRadius: 8, marginRight: s(7), opacity: loggingId ? 0.5 : 1 }}><Text style={{ color: status === 'taken' ? WHITE : NAVY, fontFamily: 'DMSans_500Medium' }}>{status[0].toUpperCase() + status.slice(1)}</Text></TouchableOpacity>)}
                         </View>}
                       </View>;
                     });
                   })()}
-                  {med.total_pills && (
+                  {med.total_pills != null && (
                     <TouchableOpacity disabled={!canEdit} onPress={() => canEdit && handleUpdatePills(med)}>
-                      <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: med.pills_remaining <= (med.refill_alert_at || 10) ? '#C0392B' : '#666', marginTop: s(4) }}>
+                      <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: med.pills_remaining != null && med.pills_remaining <= (med.refill_alert_at ?? 10) ? '#C0392B' : '#666', marginTop: s(4) }}>
                         Pills: {med.pills_remaining}/{med.total_pills}
-                        {med.pills_remaining <= (med.refill_alert_at || 10) ? ' ⚠️ Low' : ''}
+                        {med.pills_remaining != null && med.pills_remaining <= (med.refill_alert_at ?? 10) ? ' ⚠️ Low' : ''}
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -365,7 +391,7 @@ export default function PatientDetailScreen({ route, navigation }) {
                   style={{ backgroundColor: '#F5F5F5', padding: s(12), borderRadius: 8, marginBottom: s(8) }}
                 >
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(15), color: NAVY }}>{task.title}</Text>
-                  {task.description && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{task.description}</Text>}
+                  {!!task.description && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{task.description}</Text>}
                 </TouchableOpacity>
               ))
             )}
@@ -402,6 +428,7 @@ export default function PatientDetailScreen({ route, navigation }) {
           <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}>← Back</Text>
         </TouchableOpacity>
         <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY, marginBottom: s(12) }}>{patientName}</Text>
+        <Button title="Refresh care plan" onPress={onRefresh} disabled={refreshing} loading={refreshing} style={{ marginBottom: s(12) }} />
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: s(12) }}>
           {TABS.map((tab) => (
@@ -412,7 +439,7 @@ export default function PatientDetailScreen({ route, navigation }) {
                 paddingHorizontal: s(14),
                 paddingVertical: s(8),
                 borderRadius: 20,
-                backgroundColor: activeTab === tab ? NAVY : '#F0F4FF',
+                backgroundColor: activeTab === tab ? NAVY : SURFACE,
                 marginRight: s(8),
               }}
             >
@@ -429,11 +456,11 @@ export default function PatientDetailScreen({ route, navigation }) {
       <FlatList
         data={[]}
         renderItem={null}
-        ListHeaderComponent={<View style={{ padding: s(20), paddingTop: 0 }}>{renderTab()}</View>}
+        ListHeaderComponent={<TabRefreshContext.Provider value={registerRefresh}><View style={{ padding: s(20), paddingTop: 0 }}>{!!actionError && activeTab !== 'Medications' && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{actionError}</Text>}{renderTab()}</View></TabRefreshContext.Provider>}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListFooterComponent={
           <>
-            <Modal visible={addMedVisible} animationType="slide" transparent>
+            <Modal onRequestClose={() => { if (loading) return; setAddMedVisible(false); }} visible={addMedVisible} animationType="slide" transparent>
               <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
                 <ScrollView style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%', maxHeight: '80%' }}>
@@ -456,16 +483,16 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Pills Remaining</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(16) }} placeholder="e.g. 25" placeholderTextColor={PLACEHOLDER} value={medPillsRemaining} onChangeText={setMedPillsRemaining} keyboardType="numeric" />
 
-                  <Button title={loading ? 'Adding...' : 'Add Medication'} onPress={handleAddMedication} disabled={!medName.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
+                  <Button title={loading ? 'Adding' : 'Add Medication'} onPress={handleAddMedication} disabled={!medName.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
                   <Button title="Cancel" onPress={() => { setAddMedVisible(false); setMedName(''); setMedDosage(''); setMedTime(''); setMedInstructions(''); setMedTotalPills(''); setMedPillsRemaining(''); }} style={{ backgroundColor: '#999' }} />
                 </ScrollView>
                 </View>
               </KeyboardAvoidingView>
             </Modal>
 
-            <Modal visible={addTaskVisible} animationType="slide" transparent>
+            <Modal onRequestClose={() => { if (loading) return; setAddTaskVisible(false); }} visible={addTaskVisible} animationType="slide" transparent>
               <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+                <ScrollView style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: s(24) }} keyboardShouldPersistTaps="handled">
                 <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
                   <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Task</Text>
 
@@ -477,10 +504,10 @@ export default function PatientDetailScreen({ route, navigation }) {
 
                   <TimePickerInput label="Task time (optional)" value={taskTime} onChange={setTaskTime} optional />
 
-                  <Button title={loading ? 'Adding...' : 'Add Task'} onPress={handleAddTask} disabled={!taskTitle.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
+                  <Button title={loading ? 'Adding' : 'Add Task'} onPress={handleAddTask} disabled={!taskTitle.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
                   <Button title="Cancel" onPress={() => { setAddTaskVisible(false); setTaskTitle(''); setTaskDesc(''); setTaskTime(''); }} style={{ backgroundColor: '#999' }} />
                 </View>
-                </View>
+                </ScrollView>
               </KeyboardAvoidingView>
             </Modal>
           </>
@@ -492,22 +519,89 @@ export default function PatientDetailScreen({ route, navigation }) {
 
 function DailyScheduleTab({ patientId, canEdit }) {
   const { width } = useWindowDimensions();
-  const s = (size) => Math.round(size * (width / 375));
+  const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [plan, setPlan] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [places, setPlaces] = useState([]);
+  const [placeName, setPlaceName] = useState('');
+  const [placeBusy, setPlaceBusy] = useState(false);
+  const [placeError, setPlaceError] = useState('');
+  const [checkins, setCheckins] = useState([]);
   const today = localDateKey(new Date());
 
   const fetchPlan = async () => {
-    const { data } = await supabase.from('daily_plans').select('*').eq('patient_id', patientId).eq('plan_date', today).maybeSingle();
+    const { data, error } = await supabase.from('daily_plans').select('*').eq('patient_id', patientId).eq('plan_date', localDateKey(new Date())).maybeSingle();
+    if (error) throw error;
     setPlan(data || null);
+    if (data) {
+      const { data: rows, error: checkinError } = await supabase.from('activity_checkins').select('block_index, checked_at').eq('plan_id', data.id);
+      if (checkinError) throw checkinError;
+      else setCheckins(rows || []);
+    } else setCheckins([]);
   };
 
-  useEffect(() => { fetchPlan(); }, [patientId]);
+  const fetchPlaces = async () => {
+    if (!canEdit) return;
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user) throw new Error('Please sign in again to manage NFC places.');
+    const { data, error } = await supabase.from('checkin_locations').select('*').eq('caregiver_id', user.id).order('name');
+    if (error) throw error;
+    else setPlaces(data || []);
+  };
+
+  const loadError = useTabLoader(async () => { await fetchPlan(); await fetchPlaces(); }, patientId);
+
+  const addPlace = async () => {
+    const name = placeName.trim();
+    if (!name || placeBusy) return;
+    setPlaceBusy(true);
+    setPlaceError('');
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) throw new Error('Please sign in again.');
+      const { error } = await supabase.from('checkin_locations').insert({ caregiver_id: user.id, name, tag_token: Crypto.randomUUID() });
+      if (error) throw error;
+      setPlaceName('');
+      await fetchPlaces();
+    } catch (error) {
+      setPlaceError(error.message || 'Could not add this place.');
+    } finally { setPlaceBusy(false); }
+  };
+
+  const programSticker = async (place) => {
+    if (placeBusy) return;
+    setPlaceBusy(true);
+    setPlaceError('');
+    try {
+      await writeLocationTag(place.tag_token);
+      Alert.alert('Sticker ready', `${place.name} is ready for activity check-ins.`);
+    } catch (error) {
+      setPlaceError(error.message || 'Could not write this sticker. Try another NFC sticker.');
+    } finally { setPlaceBusy(false); }
+  };
+
+  const assignPlace = async (index, place) => {
+    if (!plan || saving || checkins.some((item) => item.block_index === index)) return;
+    setSaving(true);
+    try {
+    setPlaceError('');
+    const blocks = plan.blocks.map((block, blockIndex) => blockIndex === index
+      ? { ...block, location_id: place?.id || null, location_name: place?.name || null }
+      : block);
+    const { data, error } = await supabase.from('daily_plans').update({ blocks, updated_at: new Date().toISOString() }).eq('id', plan.id).select().single();
+    setSaving(false);
+    if (error) setPlaceError(error.message || 'Could not assign this place.');
+    else setPlan(data);
+    } catch (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+    } finally { setSaving(false); }
+  };
 
   const adjustBlock = async (index, amount) => {
     if (!plan || saving) return;
     const blocks = plan.blocks.map((block, blockIndex) => blockIndex === index ? { ...block, minutes: Math.max(0, Number(block.minutes || 0) + amount) } : block);
     setSaving(true);
+    try {
     const { data, error } = await supabase
       .from('daily_plans')
       .update({ blocks, overridden_by: (await supabase.auth.getUser()).data.user?.id || null, updated_at: new Date().toISOString() })
@@ -520,28 +614,46 @@ function DailyScheduleTab({ patientId, canEdit }) {
       return;
     }
     setPlan(data);
+    } catch (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+    } finally { setSaving(false); }
   };
-
-  if (!plan) return <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>The patient has not completed today’s check-in yet.</Text>;
 
   return (
     <>
+      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
       <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginBottom: s(5) }}>Today’s schedule</Text>
-      <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666', marginBottom: s(12) }}>{plan.overridden_by ? 'Adjusted by caregiver' : 'Built from the morning check-in'}</Text>
-      {(plan.blocks || []).map((block, index) => (
-        <View key={`${block.start}-${index}`} style={{ backgroundColor: '#F0F4FF', borderRadius: 10, padding: s(12), marginBottom: s(8), flexDirection: 'row', alignItems: 'center' }}>
+      {!!placeError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{placeError}</Text>}
+      {!plan ? <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666', marginBottom: s(12) }}>The patient has not completed today’s check-in yet.</Text> : <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666', marginBottom: s(12) }}>{plan.overridden_by ? 'Adjusted by caregiver' : 'Built from the morning check-in'}</Text>}
+      <TouchableOpacity onPress={async () => { try { await fetchPlan(); await fetchPlaces(); setPlaceError(''); } catch (error) { setPlaceError(error.message || 'Could not refresh.'); } }} style={{ marginBottom: s(12) }}><Text style={{ color: NAVY, fontFamily: 'DMSans_500Medium' }}>Refresh schedule and check-ins</Text></TouchableOpacity>
+      {(plan?.blocks || []).map((block, index) => (
+        <View key={`${block.start}-${index}`} style={{ backgroundColor: SURFACE, borderRadius: 6, padding: s(12), marginBottom: s(8), flexDirection: 'row', alignItems: 'center' }}>
           <Text style={{ width: s(66), fontFamily: 'DMSans_700Bold', fontSize: s(12), color: NAVY }}>{displayTime(block.start)}</Text>
-          <View style={{ flex: 1 }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>{block.title || planLabels[block.type]}</Text><Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666' }}>{block.minutes} minutes</Text></View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>{block.title || planLabels[block.type]}</Text>
+            <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666' }}>{block.minutes} minutes{block.location_name ? `, ${block.location_name}` : ''}</Text>
+            {checkins.some((item) => item.block_index === index) && <Text style={{ color: '#217346', fontFamily: 'DMSans_500Medium', marginTop: s(4) }}>Arrived at {new Date(checkins.find((item) => item.block_index === index).checked_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</Text>}
+            {canEdit && block.type !== 'medicine' && !checkins.some((item) => item.block_index === index) && places.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: s(7) }}>
+              {[null, ...places].map((place) => <TouchableOpacity key={place?.id || 'none'} disabled={saving} onPress={() => assignPlace(index, place)} style={{ backgroundColor: block.location_id === (place?.id || null) ? NAVY : WHITE, borderRadius: 6, paddingVertical: s(6), paddingHorizontal: s(8), marginRight: s(5) }}><Text style={{ color: block.location_id === (place?.id || null) ? WHITE : NAVY, fontSize: s(12) }}>{place?.name || 'No place'}</Text></TouchableOpacity>)}
+            </ScrollView>}
+          </View>
           {canEdit && <View style={{ flexDirection: 'row' }}><TouchableOpacity disabled={saving} onPress={() => adjustBlock(index, -15)} style={{ padding: s(8) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY }}>−</Text></TouchableOpacity><TouchableOpacity disabled={saving} onPress={() => adjustBlock(index, 15)} style={{ padding: s(8) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY }}>+</Text></TouchableOpacity></View>}
         </View>
       ))}
+      {canEdit && <View style={{ marginTop: s(16), padding: s(14), backgroundColor: SURFACE, borderRadius: 6 }}>
+        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY }}>Places & NFC stickers</Text>
+        <Text style={{ color: '#666', marginTop: s(4), marginBottom: s(10) }}>Add a place, write its sticker, then select that place for an activity above.</Text>
+        <TextInput value={placeName} onChangeText={setPlaceName} placeholder="e.g. Game room" placeholderTextColor={PLACEHOLDER} maxLength={80} style={{ borderWidth: 1, borderColor: NAVY, borderRadius: 8, padding: s(10), backgroundColor: WHITE, color: NAVY, marginBottom: s(8) }} />
+        <Button title="Add place" onPress={addPlace} disabled={!placeName.trim() || placeBusy} style={{ marginBottom: s(10) }} />
+        {places.map((place) => <View key={place.id} style={{ paddingVertical: s(8), borderTopWidth: 1, borderColor: '#D8E0F0', flexDirection: 'row', alignItems: 'center' }}><Text style={{ flex: 1, color: NAVY, fontFamily: 'DMSans_500Medium' }}>{place.name}</Text><TouchableOpacity disabled={placeBusy} onPress={() => programSticker(place)} accessibilityRole="button" style={{ padding: s(8) }}><Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold' }}>Write sticker</Text></TouchableOpacity></View>)}
+      </View>}
     </>
   );
 }
 
 function CareNotesTab({ patientId, canEdit }) {
   const { width } = useWindowDimensions();
-  const s = (size) => Math.round(size * (width / 375));
+  const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [notes, setNotes] = useState([]);
   const [addVisible, setAddVisible] = useState(false);
   const [noteTitle, setNoteTitle] = useState('');
@@ -549,15 +661,17 @@ function CareNotesTab({ patientId, canEdit }) {
   const [loading, setLoading] = useState(false);
 
   const fetchNotes = async () => {
-    const { data } = await supabase.from('care_notes').select('*').eq('patient_id', patientId).order('pinned', { ascending: false }).order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('care_notes').select('*').eq('patient_id', patientId).order('pinned', { ascending: false }).order('created_at', { ascending: false });
+    if (error) throw error;
     setNotes(data || []);
   };
 
-  useEffect(() => { fetchNotes(); }, [patientId]);
+  const loadError = useTabLoader(fetchNotes, patientId);
 
   const handleAdd = async () => {
     if (!noteTitle.trim() || !noteBody.trim()) return;
     setLoading(true);
+    try {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       setLoading(false);
@@ -573,17 +687,21 @@ function CareNotesTab({ patientId, canEdit }) {
     setAddVisible(false);
     setNoteTitle('');
     setNoteBody('');
-    fetchNotes();
+    fetchNotes().catch(error => Alert.alert('Could not refresh notes', error.message));
+    } catch (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+    } finally { setLoading(false); }
   };
 
   const handleTogglePin = async (note) => {
     const { error } = await supabase.from('care_notes').update({ pinned: !note.pinned }).eq('id', note.id);
     if (error) Alert.alert('Error', error.message || 'Could not update this note.');
-    else fetchNotes();
+    else fetchNotes().catch(error => Alert.alert('Could not refresh notes', error.message));
   };
 
   return (
     <>
+      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}>
         <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Care Notes</Text>
         {canEdit && <TouchableOpacity onPress={() => setAddVisible(true)}>
@@ -600,14 +718,14 @@ function CareNotesTab({ patientId, canEdit }) {
           </TouchableOpacity>
         ))
       )}
-      <Modal visible={addVisible} animationType="slide" transparent>
+      <Modal onRequestClose={() => { if (loading) return; setAddVisible(false); }} visible={addVisible} animationType="slide" transparent>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Note</Text>
             <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="Title" placeholderTextColor={PLACEHOLDER} value={noteTitle} onChangeText={setNoteTitle} />
-            <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, height: s(100), textAlignVertical: 'top', marginBottom: s(16) }} placeholder="Note..." placeholderTextColor={PLACEHOLDER} value={noteBody} onChangeText={setNoteBody} multiline />
-            <Button title={loading ? 'Adding...' : 'Add'} onPress={handleAdd} disabled={!noteTitle.trim() || !noteBody.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
+            <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, height: s(100), textAlignVertical: 'top', marginBottom: s(16) }} placeholder="Note" placeholderTextColor={PLACEHOLDER} value={noteBody} onChangeText={setNoteBody} multiline />
+                  <Button title={loading ? 'Adding' : 'Add'} onPress={handleAdd} disabled={!noteTitle.trim() || !noteBody.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
             <Button title="Cancel" onPress={() => { setAddVisible(false); setNoteTitle(''); setNoteBody(''); }} style={{ backgroundColor: '#999' }} />
           </View>
         </View>
@@ -619,21 +737,23 @@ function CareNotesTab({ patientId, canEdit }) {
 
 function VitalsTab({ patientId }) {
   const { width } = useWindowDimensions();
-  const s = (size) => Math.round(size * (width / 375));
+  const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [vitals, setVitals] = useState([]);
 
   const fetchVitals = async () => {
-    const { data } = await supabase.from('vital_signs').select('*').eq('patient_id', patientId).order('logged_at', { ascending: false }).limit(20);
+    const { data, error } = await supabase.from('vital_signs').select('*').eq('patient_id', patientId).order('logged_at', { ascending: false }).limit(20);
+    if (error) throw error;
     setVitals(data || []);
   };
 
-  useEffect(() => { fetchVitals(); }, [patientId]);
+  const loadError = useTabLoader(fetchVitals, patientId);
 
   const getTypeIcon = (type) => ({ blood_pressure: '❤️', blood_sugar: '🩸', weight: '⚖️', temperature: '🌡️', heart_rate: '💓', oxygen: '💨' }[type] || '📊');
   const getTypeLabel = (type) => ({ blood_pressure: 'Blood Pressure', blood_sugar: 'Blood Sugar', weight: 'Weight', temperature: 'Temperature', heart_rate: 'Heart Rate', oxygen: 'Oxygen' }[type] || type);
 
   return (
     <>
+      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
       <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginBottom: s(12) }}>Vitals History</Text>
       {vitals.length === 0 ? (
         <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No vitals logged yet</Text>
@@ -655,21 +775,23 @@ function VitalsTab({ patientId }) {
 
 function AppointmentsTab({ patientId, navigation, canEdit }) {
   const { width } = useWindowDimensions();
-  const s = (size) => Math.round(size * (width / 375));
+  const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [appointments, setAppointments] = useState([]);
 
   const fetchAppts = async () => {
-    const { data } = await supabase.from('appointments').select('*').eq('patient_id', patientId).order('appointment_time', { ascending: true });
+    const { data, error } = await supabase.from('appointments').select('*').eq('patient_id', patientId).order('appointment_time', { ascending: true });
+    if (error) throw error;
     setAppointments(data || []);
   };
 
-  useFocusEffect(React.useCallback(() => { fetchAppts(); }, [patientId]));
+  const loadError = useTabLoader(fetchAppts, patientId);
 
   const now = new Date();
   const upcoming = appointments.filter((a) => new Date(a.appointment_time) >= now && !a.completed);
 
   return (
     <>
+      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Upcoming Appointments</Text><TouchableOpacity onPress={() => navigation.navigate('Appointments', { patientId, isPatient: !canEdit })}><Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold' }}>{canEdit ? '+ Add' : 'View all'}</Text></TouchableOpacity></View>
       {upcoming.length === 0 ? (
         <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No upcoming appointments</Text>
@@ -677,9 +799,9 @@ function AppointmentsTab({ patientId, navigation, canEdit }) {
         upcoming.map((appt) => {
           const dt = new Date(appt.appointment_time);
           return (
-            <View key={appt.id} style={{ backgroundColor: '#F0F4FF', padding: s(12), borderRadius: 8, marginBottom: s(8) }}>
+            <View key={appt.id} style={{ backgroundColor: SURFACE, padding: s(12), borderRadius: 6, marginBottom: s(8) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>{appt.title}</Text>
-              {appt.doctor && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#333' }}>Dr. {appt.doctor}</Text>}
+              {!!appt.doctor && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#333' }}>Dr. {appt.doctor}</Text>}
               <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#999', marginTop: s(4) }}>
                 {dt.toLocaleDateString()} at {dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </Text>
@@ -693,20 +815,22 @@ function AppointmentsTab({ patientId, navigation, canEdit }) {
 
 function MoodTab({ patientId }) {
   const { width } = useWindowDimensions();
-  const s = (size) => Math.round(size * (width / 375));
+  const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [moods, setMoods] = useState([]);
 
   const fetchMoods = async () => {
-    const { data } = await supabase.from('mood_logs').select('*').eq('patient_id', patientId).order('logged_at', { ascending: false }).limit(14);
+    const { data, error } = await supabase.from('mood_logs').select('*').eq('patient_id', patientId).order('logged_at', { ascending: false }).limit(14);
+    if (error) throw error;
     setMoods(data || []);
   };
 
-  useEffect(() => { fetchMoods(); }, [patientId]);
+  const loadError = useTabLoader(fetchMoods, patientId);
 
   const getEmoji = (mood) => ({ 1: '🤒', 2: '😢', 3: '😟', 4: '😐', 5: '😊' }[mood] || '😐');
 
   return (
     <>
+      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
       <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginBottom: s(12) }}>Mood History</Text>
       {moods.length === 0 ? (
         <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No mood entries yet</Text>
@@ -715,8 +839,8 @@ function MoodTab({ patientId }) {
           <View key={m.id} style={{ flexDirection: 'row', alignItems: 'center', padding: s(10), borderBottomWidth: 1, borderBottomColor: '#EEE' }}>
             <Text style={{ fontSize: s(24), marginRight: s(12) }}>{getEmoji(m.mood)}</Text>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}>{['', 'Very Bad', 'Bad', 'Okay', 'Good', 'Great'][m.mood]}</Text>
-              {m.note && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{m.note}</Text>}
+              <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}>{MOODS.find(item => item.value === m.mood)?.label || 'Unknown'}</Text>
+              {!!m.note && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{m.note}</Text>}
             </View>
             <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(11), color: '#999' }}>{new Date(m.logged_at).toLocaleDateString()}</Text>
           </View>
@@ -728,46 +852,33 @@ function MoodTab({ patientId }) {
 
 function ReportTab({ patientId }) {
   const { width } = useWindowDimensions();
-  const s = (size) => Math.round(size * (width / 375));
+  const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [report, setReport] = useState(null);
 
   const fetchReport = async () => {
     const now = new Date();
-    const weekAgo = new Date(now);
-    weekAgo.setDate(weekAgo.getDate() - 7);
+    const { startDay, endDay } = reportWindow(now);
 
-    const { data: medLogs } = await supabase.from('medication_log').select('*').eq('patient_id', patientId).gte('logged_at', weekAgo.toISOString());
-    const { data: taskComps } = await supabase.from('task_completion').select('*').eq('patient_id', patientId).gte('completed_at', weekAgo.toISOString());
-    const { data: meds } = await supabase.from('medications').select('id').eq('patient_id', patientId);
-    const { data: medicationSchedules } = await supabase
+    const { data: medLogs, error: medLogsError } = await supabase.from('medication_log').select('*').eq('patient_id', patientId).gte('log_day', startDay).lt('log_day', endDay);
+    const { data: taskComps, error: taskCompsError } = await supabase.from('task_completion').select('*').eq('patient_id', patientId).gte('completion_day', startDay).lt('completion_day', endDay);
+    const { data: meds, error: medsError } = await supabase.from('medications').select('id, created_at').eq('patient_id', patientId);
+    const { data: medicationSchedules, error: medicationSchedulesError } = await supabase
       .from('medication_schedule')
-      .select('medication_id, days')
+      .select('*')
       .eq('patient_id', patientId)
       .eq('active', true);
-    const { data: tasks } = await supabase.from('tasks').select('id, days').eq('patient_id', patientId).eq('active', true);
+    const { data: tasks, error: tasksError } = await supabase.from('tasks').select('id, days, created_at').eq('patient_id', patientId).eq('active', true);
 
-    const medTaken = (medLogs || []).filter((l) => l.status === 'taken').length;
-    const medMissed = (medLogs || []).filter((l) => l.status === 'missed').length;
-    const taskDone = (taskComps || []).filter((c) => c.status === 'completed').length;
-    const taskMissed = (taskComps || []).filter((c) => c.status === 'missed').length;
-    const reportDays = Array.from({ length: 7 }, (_, index) => REPORT_DAYS[index]);
-    const totalMedSlots = (meds || []).reduce((total, med) => {
-      const medSchedules = (medicationSchedules || []).filter((schedule) => schedule.medication_id === med.id);
-      if (!medSchedules.length) return total + 7;
-      return total + reportDays.reduce((count, day) => count + medSchedules.filter((schedule) => (
-        Array.isArray(schedule.days) && schedule.days.includes(day)
-      )).length, 0);
-    }, 0);
-    const totalTaskSlots = (tasks || []).reduce((total, task) => {
-      const configuredDays = Array.isArray(task.days) ? task.days : [];
-      return total + (configuredDays.length ? reportDays.filter((day) => configuredDays.includes(day)).length : 7);
-    }, 0);
+    const requestError = [medLogsError, taskCompsError, medsError, medicationSchedulesError, tasksError].find(Boolean);
+    if (requestError) throw requestError;
+    const totals = reportTotals(meds, medicationSchedules, tasks, medLogs, taskComps, now);
 
-    setReport({ medTaken, medMissed, taskDone, taskMissed, totalMedSlots, totalTaskSlots });
+    setReport(totals);
   };
 
-  useEffect(() => { fetchReport(); }, [patientId]);
+  const loadError = useTabLoader(fetchReport, patientId);
 
+  if (!report && loadError) return <Text style={{ color: '#C0392B' }}>{loadError}</Text>;
   if (!report) return <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>Loading...</Text>;
 
   const medRate = report.totalMedSlots > 0 ? Math.round((report.medTaken / report.totalMedSlots) * 100) : 0;
@@ -775,22 +886,23 @@ function ReportTab({ patientId }) {
 
   return (
     <>
+      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
       <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginBottom: s(12) }}>Weekly Report</Text>
 
-      <View style={{ backgroundColor: '#F0F4FF', borderRadius: 12, padding: s(14), marginBottom: s(10) }}>
+      <View style={{ backgroundColor: SURFACE, borderRadius: 6, padding: s(14), marginBottom: s(10) }}>
         <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginBottom: s(6) }}>Medications</Text>
         <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#333' }}>Taken: {report.medTaken} | Missed: {report.medMissed}</Text>
         <View style={{ height: 8, backgroundColor: '#E0E0E0', borderRadius: 4, marginTop: s(6), overflow: 'hidden' }}>
-          <View style={{ height: '100%', width: `${medRate}%`, backgroundColor: medRate >= 80 ? '#4CAF50' : medRate >= 50 ? '#FF9800' : '#F44336', borderRadius: 4 }} />
+          <View style={{ height: '100%', width: `${medRate}%`, backgroundColor: medRate >= 80 ? NAVY : medRate >= 50 ? '#FF9800' : '#F44336', borderRadius: 4 }} />
         </View>
         <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(12), color: NAVY, marginTop: s(4) }}>{medRate}% completion</Text>
       </View>
 
-      <View style={{ backgroundColor: '#F0F4FF', borderRadius: 12, padding: s(14) }}>
+      <View style={{ backgroundColor: SURFACE, borderRadius: 6, padding: s(14) }}>
         <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginBottom: s(6) }}>Tasks</Text>
         <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#333' }}>Done: {report.taskDone} | Missed: {report.taskMissed}</Text>
         <View style={{ height: 8, backgroundColor: '#E0E0E0', borderRadius: 4, marginTop: s(6), overflow: 'hidden' }}>
-          <View style={{ height: '100%', width: `${taskRate}%`, backgroundColor: taskRate >= 80 ? '#4CAF50' : taskRate >= 50 ? '#FF9800' : '#F44336', borderRadius: 4 }} />
+          <View style={{ height: '100%', width: `${taskRate}%`, backgroundColor: taskRate >= 80 ? NAVY : taskRate >= 50 ? '#FF9800' : '#F44336', borderRadius: 4 }} />
         </View>
         <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(12), color: NAVY, marginTop: s(4) }}>{taskRate}% completion</Text>
       </View>

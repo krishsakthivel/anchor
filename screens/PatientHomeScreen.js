@@ -1,22 +1,22 @@
+import { useFocusEffect } from '@react-navigation/native';
+const { MOODS, isValidVitalValue } = require('../lib/careValues');
+const { medicationLogError } = require('../lib/medicationLogError');
+import { appAlert as Alert } from '../components/AppDialog';
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, FlatList, useWindowDimensions, RefreshControl, TouchableOpacity, Alert, Linking, TextInput, Modal, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, Image, FlatList, ScrollView, useWindowDimensions, RefreshControl, TouchableOpacity, Linking, TextInput, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, AppState } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { dispatchHelpNotification } from '../lib/helpNotifications';
 const { getRoutineStatus } = require('../lib/routineStatus');
-import { NAVY, WHITE, PLACEHOLDER, MUTED, SURFACE, BORDER, SUCCESS, SUCCESS_BG, WARNING, WARNING_BG, DANGER } from '../theme/colors';
+import { NAVY, WHITE, PLACEHOLDER, MUTED, SURFACE, BORDER, SUCCESS, SUCCESS_BG, WARNING, WARNING_BG, DANGER, DANGER_BG } from '../theme/colors';
 import Button from '../components/Button';
 import { schedulePatientMedicationReminders, schedulePlanReminders } from '../lib/notifications';
 import { buildDailyPlan, displayTime, planLabels } from '../lib/dailyPlan';
+import { readLocationTag } from '../lib/nfc';
+import { getElderMode } from '../lib/accessibility';
 const { localDateKey } = require('../lib/localDate');
 
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-const MOODS = [
-  { value: 1, emoji: '🤒', label: 'Very unwell' },
-  { value: 2, emoji: '😢', label: 'Sad' },
-  { value: 3, emoji: '😟', label: 'Not great' },
-  { value: 4, emoji: '😐', label: 'Okay' },
-  { value: 5, emoji: '😊', label: 'Good' },
-];
 const VITAL_UNITS = {
   blood_pressure: 'mmHg',
   blood_sugar: 'mg/dL',
@@ -43,7 +43,7 @@ const formatScheduleTime = (time) => {
 };
 
 export default function PatientHomeScreen({ route, navigation }) {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const [patient, setPatient] = useState(null);
   const [medications, setMedications] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -64,9 +64,16 @@ export default function PatientHomeScreen({ route, navigation }) {
   const [vitalLoading, setVitalLoading] = useState(false);
   const [vitalError, setVitalError] = useState('');
   const [dailyPlan, setDailyPlan] = useState(null);
+  const [activityCheckins, setActivityCheckins] = useState([]);
+  const [checkinError, setCheckinError] = useState('');
+  const [scanningBlock, setScanningBlock] = useState(null);
   const [planVisible, setPlanVisible] = useState(false);
   const [planAnswers, setPlanAnswers] = useState({ sleep: '', feeling: '', energy: '', play: '', needsCare: '' });
   const [planSaving, setPlanSaving] = useState(false);
+  const [elderMode, setElderMode] = useState(false);
+  const [latestSafetyCheckin, setLatestSafetyCheckin] = useState(null);
+  const [upcomingAppointment, setUpcomingAppointment] = useState(null);
+  const [safetySaving, setSafetySaving] = useState(false);
 
   const [fetchError, setFetchError] = useState('');
   const [codeInvalid, setCodeInvalid] = useState(false);
@@ -74,9 +81,16 @@ export default function PatientHomeScreen({ route, navigation }) {
   const [claimedPatientId, setClaimedPatientId] = useState(null);
   const pendingMedLogs = useRef(new Set());
   const pendingTaskCompletions = useRef(new Set());
+  const promptedPlanDate = useRef(null);
+  const loadedDate = useRef(localDateKey(new Date()));
+  const latestFetch = useRef(null);
+  const dayRefreshInFlight = useRef(false);
 
-  const scale = Math.min(1.08, Math.max(0.95, width / 375));
+  const scale = elderMode
+    ? Math.min(1.2, Math.max(1.05, width / 330))
+    : Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
+  const planModalHeight = Math.min(height * 0.9, Math.max(s(360), height - s(28)));
 
   const code = route?.params?.code;
   const routePatientId = route?.params?.patientId;
@@ -96,7 +110,7 @@ export default function PatientHomeScreen({ route, navigation }) {
     setCodeInvalid(false);
     try {
       let { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError) throw userError;
+      if (userError && !userError.message?.toLowerCase().includes('auth session missing')) throw userError;
 
       if (!user) {
         const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
@@ -150,6 +164,15 @@ export default function PatientHomeScreen({ route, navigation }) {
       }
       setPatient(patientData);
 
+      const [safetyResult, appointmentResult] = await Promise.all([
+        supabase.from('safety_checkins').select('*').eq('patient_id', patientData.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+        supabase.from('appointments').select('*').eq('patient_id', patientData.id).eq('completed', false).gte('appointment_time', new Date().toISOString()).order('appointment_time', { ascending: true }).limit(1).maybeSingle(),
+      ]);
+      if (safetyResult.error) throw safetyResult.error;
+      if (appointmentResult.error) throw appointmentResult.error;
+      setLatestSafetyCheckin(safetyResult.data || null);
+      setUpcomingAppointment(appointmentResult.data || null);
+
       const { data: schedules, error: schedulesError } = await supabase.from('medication_schedule').select('*').eq('patient_id', patientData.id).eq('active', true);
       if (schedulesError) throw schedulesError;
       const { data: meds, error: medsError } = await supabase.from('medications').select('*').eq('patient_id', patientData.id);
@@ -172,7 +195,15 @@ export default function PatientHomeScreen({ route, navigation }) {
       }
     });
       setMedications(todayMeds);
-      schedulePatientMedicationReminders(todayMeds).catch(() => {});
+      const medicationsById = new Map((meds || []).map((med) => [med.id, med]));
+      const reminderEntries = (schedules || []).map((schedule) => ({
+        id: schedule.medication_id,
+        name: medicationsById.get(schedule.medication_id)?.name || 'Medicine',
+        schedule_id: schedule.id,
+        schedule_time: String(schedule.time).slice(0, 5),
+        days: schedule.days,
+      }));
+      schedulePatientMedicationReminders(reminderEntries, user.id).catch(() => {});
 
       const { data: taskData, error: tasksError } = await supabase.from('tasks').select('*').eq('patient_id', patientData.id).eq('active', true);
       if (tasksError) throw tasksError;
@@ -203,8 +234,23 @@ export default function PatientHomeScreen({ route, navigation }) {
       setMoodToday(todayMood?.[0] || null);
 
       const planDate = localDateKey(new Date());
-      const { data: plan } = await supabase.from('daily_plans').select('*').eq('patient_id', patientData.id).eq('plan_date', planDate).maybeSingle();
+      const { data: plan, error: planError } = await supabase.from('daily_plans').select('*').eq('patient_id', patientData.id).eq('plan_date', planDate).maybeSingle();
+      if (planError) throw planError;
       setDailyPlan(plan || null);
+      if (plan) schedulePlanReminders(plan.blocks || [], user.id).catch(() => {});
+      if (plan) {
+        const { data: checkins, error: checkinLoadError } = await supabase.from('activity_checkins').select('id, block_index, checked_at').eq('plan_id', plan.id);
+        if (checkinLoadError) setCheckinError('Activity check-ins could not load. Ask your caregiver to check setup.');
+        else { setActivityCheckins(checkins || []); setCheckinError(''); }
+      } else {
+        setActivityCheckins([]);
+        setCheckinError('');
+      }
+      if (!plan && promptedPlanDate.current !== planDate) {
+        promptedPlanDate.current = planDate;
+        setPlanVisible(true);
+      }
+      loadedDate.current = planDate;
     } catch (err) {
       console.error('PatientHome fetch failed', err);
       setFetchError(err?.message ? `Could not load your care plan: ${err.message}` : 'Could not load your care plan. Please try again.');
@@ -213,7 +259,29 @@ export default function PatientHomeScreen({ route, navigation }) {
     }
   };
 
+  latestFetch.current = fetchData;
+
   useEffect(() => { fetchData(); }, [routePatientId, code, claimedPatientId]);
+
+  useFocusEffect(React.useCallback(() => {
+    let active = true;
+    getElderMode().then(value => { if (active) setElderMode(value); }).catch(() => {});
+    return () => { active = false; };
+  }, []));
+
+  useEffect(() => {
+    const refreshForNewDay = () => {
+      const currentDate = localDateKey(new Date());
+      if (currentDate === loadedDate.current || dayRefreshInFlight.current) return;
+      dayRefreshInFlight.current = true;
+      Promise.resolve(latestFetch.current?.()).finally(() => { dayRefreshInFlight.current = false; });
+    };
+    const timer = setInterval(refreshForNewDay, 60000);
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshForNewDay();
+    });
+    return () => { clearInterval(timer); subscription.remove(); };
+  }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -250,7 +318,7 @@ export default function PatientHomeScreen({ route, navigation }) {
         .single();
       if (error) {
         console.error('medication_log insert failed', error);
-        Alert.alert('Could not save', error.message || 'Please try again.');
+        Alert.alert('Could not save', medicationLogError(error));
         return;
       }
       await fetchData();
@@ -313,7 +381,7 @@ export default function PatientHomeScreen({ route, navigation }) {
   const handleLogMood = async () => {
     if (!selectedMood || moodLoading) return;
     if (!patient) {
-      setMoodError('Still loading your info — please wait a moment and try again.');
+      setMoodError('Still loading your info, please wait a moment and try again.');
       return;
     }
     setMoodLoading(true);
@@ -351,6 +419,7 @@ export default function PatientHomeScreen({ route, navigation }) {
   const saveDailyPlan = async () => {
     if (Object.values(planAnswers).some((answer) => !answer) || !patient || planSaving) return;
     setPlanSaving(true);
+    try {
     const blocks = buildDailyPlan(planAnswers, medications);
     const planDate = localDateKey(new Date());
     const { data, error } = await supabase
@@ -364,14 +433,40 @@ export default function PatientHomeScreen({ route, navigation }) {
       return;
     }
     setDailyPlan(data);
-    schedulePlanReminders(blocks).catch(() => {});
+    schedulePlanReminders(blocks, patient.paired_user_id).catch(() => {});
     setPlanVisible(false);
+    } catch (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+    } finally { setPlanSaving(false); }
+  };
+
+  const scanActivitySticker = async (index) => {
+    if (!dailyPlan || scanningBlock !== null) return;
+    setScanningBlock(index);
+    setCheckinError('');
+    try {
+      const token = await readLocationTag();
+      const { data, error } = await supabase.rpc('check_in_activity', {
+        p_plan_id: dailyPlan.id, p_block_index: index, p_tag_token: token,
+      });
+      if (error) throw error;
+      setActivityCheckins((current) => [...current, data]);
+      Alert.alert('Checked in', `You arrived at ${dailyPlan.blocks[index]?.location_name || 'your activity'}.`);
+    } catch (error) {
+      setCheckinError(error.message || 'Could not check in. Try scanning the sticker again.');
+    } finally {
+      setScanningBlock(null);
+    }
   };
 
   const handleLogVital = async () => {
     if (!vitalType || !vitalValue.trim() || vitalLoading) return;
     if (!patient) {
-      setVitalError('Still loading your info — please wait a moment and try again.');
+      setVitalError('Still loading your info, please wait a moment and try again.');
+      return;
+    }
+    if (!isValidVitalValue(vitalType, vitalValue)) {
+      setVitalError(vitalType === 'blood_pressure' ? 'Enter two positive numbers, such as 120/80.' : 'Enter a positive number for this reading.');
       return;
     }
     setVitalLoading(true);
@@ -412,6 +507,46 @@ export default function PatientHomeScreen({ route, navigation }) {
     ]);
   };
 
+  const handleSafetyCheckin = async (status) => {
+    if (!patient || safetySaving) return;
+    setSafetySaving(true);
+    try {
+    const { data, error } = await supabase
+      .from('safety_checkins')
+      .insert({ patient_id: patient.id, status })
+      .select()
+      .single();
+    setSafetySaving(false);
+    if (error) {
+      Alert.alert('Could not send check-in', 'Please try again or call your caregiver.');
+      return;
+    }
+    setLatestSafetyCheckin(data);
+    if (status !== 'okay') dispatchHelpNotification(data.id).catch(() => {});
+    if (status === 'urgent') {
+      Alert.alert('Urgent help requested', 'Call 911 if you are in immediate danger.', [
+        { text: 'Call 911', style: 'destructive', onPress: () => Linking.openURL('tel:911') },
+        { text: 'Close', style: 'cancel' },
+      ]);
+    } else if (status === 'needs_help') {
+      Alert.alert('Help request saved', 'Your caregiver can see your request in Anchor. If you need immediate help, call them.');
+    } else {
+      Alert.alert('Check-in sent', 'Your caregiver can see that you are okay.');
+    }
+    } catch (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+    } finally { setSafetySaving(false); }
+  };
+
+  const openSafetyCheckin = () => {
+    Alert.alert('How are you right now?', 'Choose the option that best fits.', [
+      { text: 'I am okay', onPress: () => handleSafetyCheckin('okay') },
+      { text: 'I need help', onPress: () => handleSafetyCheckin('needs_help') },
+      { text: 'Urgent help', style: 'destructive', onPress: () => handleSafetyCheckin('urgent') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const getMoodEmoji = (mood) => MOODS.find((m) => m.value === mood)?.emoji || '😐';
   const routineItems = [
     ...medications.map((medication) => {
@@ -421,7 +556,7 @@ export default function PatientHomeScreen({ route, navigation }) {
         key: `med-${medication.slotKey || medication.id}`,
         kind: 'medicine',
         title: medication.name,
-        detail: [medication.dosage, medication.instructions].filter(Boolean).join(' · '),
+        detail: [medication.dosage, medication.instructions].filter(Boolean).join(', '),
         time: medication.schedule_time,
         status,
         ...routineStatus,
@@ -509,10 +644,7 @@ export default function PatientHomeScreen({ route, navigation }) {
         ListHeaderComponent={
         <View style={{ padding: s(22), paddingBottom: s(30) }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: s(24) }}>
-            <View style={{ width: s(34), height: s(34), borderRadius: s(17), backgroundColor: NAVY, alignItems: 'center', justifyContent: 'center', marginRight: s(9) }}>
-              <Ionicons name="heart" size={s(17)} color={WHITE} />
-            </View>
-            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY }}>Anchor</Text>
+            <Image source={require('../assets/logo.png')} style={{ width: s(34), height: s(34) }} resizeMode="contain" />
             <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: MUTED, marginLeft: s(8) }}>Today</Text>
           </View>
 
@@ -537,9 +669,28 @@ export default function PatientHomeScreen({ route, navigation }) {
             </View>
           )}
 
+          {upcomingAppointment && (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Appointments', { patientId: patient.id, isPatient: true })}
+              accessibilityRole="button"
+              style={{ backgroundColor: SURFACE, padding: s(18), borderRadius: 6, marginBottom: s(18), flexDirection: 'row', alignItems: 'center' }}
+            >
+              <Ionicons name="calendar-outline" size={s(28)} color={NAVY} style={{ marginRight: s(12) }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY }}>Next appointment</Text>
+                <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(16), color: NAVY, marginTop: s(3) }}>{upcomingAppointment.title}</Text>
+                <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(15), color: MUTED, marginTop: s(3) }}>
+                  {new Date(upcomingAppointment.appointment_time).toLocaleDateString()} at {new Date(upcomingAppointment.appointment_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                </Text>
+                {!!upcomingAppointment.location && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(15), color: MUTED, marginTop: s(2) }}>{upcomingAppointment.location}</Text>}
+              </View>
+              <Ionicons name="chevron-forward" size={s(22)} color={NAVY} />
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             onPress={() => setPlanVisible(true)}
-            style={{ backgroundColor: dailyPlan ? SUCCESS_BG : '#F0F4FF', padding: s(18), borderRadius: 14, marginBottom: s(18), flexDirection: 'row', alignItems: 'center' }}
+            style={{ backgroundColor: dailyPlan ? SUCCESS_BG : SURFACE, padding: s(18), borderRadius: 6, marginBottom: s(18), flexDirection: 'row', alignItems: 'center' }}
           >
             <Ionicons name={dailyPlan ? 'calendar' : 'sparkles-outline'} size={s(28)} color={NAVY} style={{ marginRight: s(12) }} />
             <View style={{ flex: 1 }}>
@@ -551,7 +702,7 @@ export default function PatientHomeScreen({ route, navigation }) {
 
           {routineItems.length > 0 && (
             <View style={{ marginBottom: s(24) }}>
-              <View style={{ backgroundColor: nextRoutineItem ? WARNING_BG : SUCCESS_BG, padding: s(18), borderRadius: 14, marginBottom: s(18) }}>
+              <View style={{ backgroundColor: nextRoutineItem ? WARNING_BG : SUCCESS_BG, padding: s(18), borderRadius: 6, marginBottom: s(18) }}>
                 <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(13), color: MUTED, marginBottom: s(5), textTransform: 'uppercase', letterSpacing: 0.7 }}>
                   {nextRoutineItem ? 'Up next' : 'Today'}
                 </Text>
@@ -560,7 +711,7 @@ export default function PatientHomeScreen({ route, navigation }) {
                 </Text>
                 <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(17), color: MUTED, marginTop: s(4) }}>
                   {nextRoutineItem
-                    ? [nextRoutineItem.detail, formatScheduleTime(nextRoutineItem.time)].filter(Boolean).join(' · ')
+                    ? [nextRoutineItem.detail, formatScheduleTime(nextRoutineItem.time)].filter(Boolean).join(', ')
                     : 'Your caregiver can see that today’s routine is complete.'}
                 </Text>
               </View>
@@ -587,7 +738,7 @@ export default function PatientHomeScreen({ route, navigation }) {
                     alignItems: 'center',
                     backgroundColor: item.complete ? SUCCESS_BG : item.handled ? WARNING_BG : SURFACE,
                     padding: s(16),
-                    borderRadius: 14,
+                    borderRadius: 6,
                     marginBottom: s(10),
                     minHeight: s(82),
                   }}
@@ -611,16 +762,30 @@ export default function PatientHomeScreen({ route, navigation }) {
           )}
 
           {routineItems.length === 0 && (
-            <View style={{ backgroundColor: SUCCESS_BG, padding: s(18), borderRadius: 14, marginBottom: s(24) }}>
+            <View style={{ backgroundColor: SUCCESS_BG, padding: s(18), borderRadius: 6, marginBottom: s(24) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: SUCCESS }}>Nothing scheduled for today</Text>
               <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(4) }}>You are all caught up.</Text>
             </View>
           )}
 
+          <TouchableOpacity
+            onPress={openSafetyCheckin}
+            disabled={safetySaving}
+            accessibilityRole="button"
+            accessibilityLabel="Send a safety check-in"
+            style={{ backgroundColor: latestSafetyCheckin?.status === 'needs_help' || latestSafetyCheckin?.status === 'urgent' ? DANGER_BG : SURFACE, padding: s(18), borderRadius: 6, marginBottom: s(18), flexDirection: 'row', alignItems: 'center', minHeight: s(82) }}
+          >
+            <Ionicons name={latestSafetyCheckin?.status === 'okay' ? 'checkmark-circle-outline' : 'hand-left-outline'} size={s(30)} color={latestSafetyCheckin?.status === 'okay' ? SUCCESS : DANGER} style={{ marginRight: s(14) }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{latestSafetyCheckin?.status === 'okay' ? 'You checked in okay' : 'How are you?'}</Text>
+              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{latestSafetyCheckin?.status === 'okay' ? 'Tap to send another check-in' : 'Let your caregiver know if you need help'}</Text>
+            </View>
+          </TouchableOpacity>
+
           {!moodToday ? (
             <TouchableOpacity
               onPress={() => { setMoodError(''); setMoodVisible(true); }}
-              style={{ backgroundColor: WARNING_BG, padding: s(18), borderRadius: 14, marginBottom: s(18), flexDirection: 'row', alignItems: 'center', minHeight: s(82) }}
+              style={{ backgroundColor: WARNING_BG, padding: s(18), borderRadius: 6, marginBottom: s(18), flexDirection: 'row', alignItems: 'center', minHeight: s(82) }}
             >
               <Text style={{ fontSize: s(30), marginRight: s(14) }}>😊</Text>
               <View style={{ flex: 1 }}>
@@ -629,7 +794,7 @@ export default function PatientHomeScreen({ route, navigation }) {
               </View>
             </TouchableOpacity>
           ) : (
-            <View style={{ backgroundColor: SUCCESS_BG, padding: s(16), borderRadius: 14, marginBottom: s(18), flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ backgroundColor: SUCCESS_BG, padding: s(16), borderRadius: 6, marginBottom: s(18), flexDirection: 'row', alignItems: 'center' }}>
               <Text style={{ fontSize: s(26), marginRight: s(12) }}>{getMoodEmoji(moodToday.mood)}</Text>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: SUCCESS }}>Mood logged for today</Text>
             </View>
@@ -637,23 +802,23 @@ export default function PatientHomeScreen({ route, navigation }) {
 
           <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginBottom: s(10) }}>More</Text>
           <View style={{ flexDirection: 'row', marginBottom: s(24) }}>
-            <TouchableOpacity onPress={() => { setVitalError(''); setVitalsVisible(true); }} style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 12, padding: s(14), marginRight: s(6), minHeight: s(76) }}>
+            <TouchableOpacity onPress={() => { setVitalError(''); setVitalsVisible(true); }} style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 6, padding: s(14), marginRight: s(6), minHeight: s(76) }}>
               <Ionicons name="pulse-outline" size={s(22)} color={NAVY} />
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginTop: s(5) }}>Log a vital</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('PatientProfile')} style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 12, padding: s(14), marginLeft: s(6), minHeight: s(76) }}>
-              <Ionicons name="person-outline" size={s(22)} color={NAVY} />
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginTop: s(5) }}>My profile</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('PatientProfile')} style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 6, padding: s(14), marginLeft: s(6), minHeight: s(76) }}>
+              <Ionicons name="settings-outline" size={s(22)} color={NAVY} />
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginTop: s(5) }}>Settings</Text>
             </TouchableOpacity>
           </View>
 
           <View style={{ marginTop: s(4), borderTopWidth: 1, borderTopColor: BORDER, paddingTop: s(20) }}>
             <TouchableOpacity
               onPress={handleEmergency}
-              style={{ backgroundColor: DANGER_BG, paddingVertical: s(19), borderRadius: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}
+              style={{ backgroundColor: DANGER_BG, paddingVertical: s(19), borderRadius: 6, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}
             >
               <Ionicons name="alert-circle" size={s(24)} color={DANGER} style={{ marginRight: s(10) }} />
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: DANGER }}>Emergency — call 911</Text>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: DANGER }}>Emergency, call 911</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -661,7 +826,7 @@ export default function PatientHomeScreen({ route, navigation }) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={NAVY} />}
         ListFooterComponent={
         <>
-          <Modal visible={moodVisible} animationType="slide" transparent>
+          <Modal onRequestClose={() => { if (moodLoading) return; setMoodVisible(false); }} visible={moodVisible} animationType="slide" transparent>
             <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(15,44,107,0.45)' }}>
               <View style={{ backgroundColor: WHITE, borderRadius: 10, padding: s(24), width: '88%' }}>
@@ -696,40 +861,68 @@ export default function PatientHomeScreen({ route, navigation }) {
                   ))}
                 </View>
                 <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(16) }} placeholder="Add a note (optional)" placeholderTextColor={PLACEHOLDER} value={moodNote} onChangeText={setMoodNote} />
-                <Button title={moodLoading ? 'Logging...' : 'Log Mood'} onPress={handleLogMood} disabled={!selectedMood || moodLoading} loading={moodLoading} style={{ borderRadius: 8, marginBottom: s(8) }} />
+                <Button title={moodLoading ? 'Logging' : 'Log Mood'} onPress={handleLogMood} disabled={!selectedMood || moodLoading} loading={moodLoading} style={{ borderRadius: 8, marginBottom: s(8) }} />
                 <Button title="Cancel" onPress={() => { if (moodLoading) return; setMoodVisible(false); setSelectedMood(null); setMoodNote(''); setMoodError(''); }} style={{ backgroundColor: MUTED, borderRadius: 8 }} />
               </View>
               </View>
             </KeyboardAvoidingView>
           </Modal>
 
-          <Modal visible={planVisible} animationType="slide" transparent>
+          <Modal onRequestClose={() => { if (planSaving) return; setPlanVisible(false); }} visible={planVisible} animationType="slide" transparent>
             <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(15,44,107,0.45)' }}>
-                <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(22), width: '90%', maxHeight: '86%' }}>
+                <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(22), width: '90%', maxHeight: planModalHeight, overflow: 'hidden' }}>
                   <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(21), color: NAVY, marginBottom: s(5) }}>{dailyPlan ? 'Today’s schedule' : 'A quick morning check-in'}</Text>
                   <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: MUTED, marginBottom: s(16) }}>{dailyPlan ? 'Your caregiver can view this schedule too.' : 'There are no wrong answers.'}</Text>
                   {dailyPlan ? (
-                    <FlatList
-                      data={dailyPlan.blocks || []}
-                      keyExtractor={(item, index) => `${item.start}-${index}`}
-                      renderItem={({ item }) => <View style={{ flexDirection: 'row', paddingVertical: s(10), borderBottomWidth: 1, borderBottomColor: BORDER }}><Text style={{ width: s(72), fontFamily: 'DMSans_700Bold', fontSize: s(13), color: NAVY }}>{displayTime(item.start)}</Text><View style={{ flex: 1 }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>{item.title || planLabels[item.type]}</Text><Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: MUTED }}>{item.minutes} minutes</Text></View></View>}
-                      style={{ maxHeight: s(360) }}
-                    />
-                  ) : (
                     <>
-                      {[['sleep', 'How was your sleep?', ['Very bad', 'Okay', 'Good']], ['feeling', 'How are you feeling?', ['Not well', 'Okay', 'Good']], ['energy', 'How much energy do you have?', ['Low', 'Some', 'A lot']]].map(([key, question, options]) => <View key={key} style={{ marginBottom: s(13) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY, marginBottom: s(7) }}>{question}</Text><View style={{ flexDirection: 'row' }}>{options.map((option, index) => <TouchableOpacity key={option} onPress={() => setPlanAnswers((current) => ({ ...current, [key]: String(index + 1) }))} style={{ flex: 1, minHeight: s(48), backgroundColor: planAnswers[key] === String(index + 1) ? NAVY : SURFACE, borderRadius: 8, padding: s(9), marginRight: index < 2 ? s(6) : 0, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: planAnswers[key] === String(index + 1) ? WHITE : NAVY, textAlign: 'center' }}>{option}</Text></TouchableOpacity>)}</View></View>)}
-                      {[['play', 'Would you like play time?'], ['needsCare', 'Would you like extra care time?']].map(([key, question]) => <View key={key} style={{ marginBottom: s(13) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY, marginBottom: s(7) }}>{question}</Text><View style={{ flexDirection: 'row' }}>{['yes', 'no'].map((answer) => <TouchableOpacity key={answer} onPress={() => setPlanAnswers((current) => ({ ...current, [key]: answer }))} style={{ flex: 1, minHeight: s(50), backgroundColor: planAnswers[key] === answer ? NAVY : SURFACE, borderRadius: 8, padding: s(10), marginRight: answer === 'yes' ? s(8) : 0, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(16), color: planAnswers[key] === answer ? WHITE : NAVY }}>{answer === 'yes' ? 'Yes' : 'No'}</Text></TouchableOpacity>)}</View></View>)}
+                      {!!checkinError && <Text style={{ color: DANGER, marginBottom: s(10) }}>{checkinError}</Text>}
+                      <FlatList
+                        data={dailyPlan.blocks || []}
+                        keyExtractor={(item, index) => `${item.start}-${index}`}
+                        renderItem={({ item, index }) => {
+                          const checked = activityCheckins.find((entry) => entry.block_index === index);
+                          return <View style={{ flexDirection: 'row', paddingVertical: s(10), borderBottomWidth: 1, borderBottomColor: BORDER }}>
+                            <Text style={{ width: s(72), fontFamily: 'DMSans_700Bold', fontSize: s(13), color: NAVY }}>{displayTime(item.start)}</Text>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>{item.title || planLabels[item.type]}</Text>
+                              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: MUTED }}>{item.minutes} minutes{item.location_name ? `, ${item.location_name}` : ''}</Text>
+                              {checked ? <Text style={{ color: SUCCESS, fontFamily: 'DMSans_500Medium', marginTop: s(6) }}>Checked in at {new Date(checked.checked_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</Text> : item.location_id && item.type !== 'medicine' ? <TouchableOpacity disabled={scanningBlock !== null} onPress={() => scanActivitySticker(index)} accessibilityRole="button" style={{ backgroundColor: NAVY, padding: s(9), borderRadius: 7, alignSelf: 'flex-start', marginTop: s(7) }}><Text style={{ color: WHITE, fontFamily: 'DMSans_700Bold' }}>{scanningBlock === index ? 'Ready to scan' : `Scan ${item.location_name || 'place'} sticker`}</Text></TouchableOpacity> : null}
+                            </View>
+                          </View>;
+                        }}
+                        style={{ flexGrow: 0, maxHeight: Math.max(s(160), planModalHeight - s(150)) }}
+                      />
                     </>
+                  ) : (
+                    <ScrollView
+                      style={{ flexGrow: 0, maxHeight: Math.max(s(180), planModalHeight - s(150)) }}
+                      contentContainerStyle={{ paddingBottom: s(4) }}
+                      keyboardShouldPersistTaps="handled"
+                    >
+                      {[
+                        ['sleep', 'How was your sleep?', ['Very bad', 'Okay', 'Good']],
+                        ['feeling', 'How are you feeling?', ['Not well', 'Okay', 'Good']],
+                        ['energy', 'How much energy do you have?', ['Low', 'Some', 'A lot']],
+                        ['play', 'Would you like play time?', ['Yes', 'No']],
+                        ['needsCare', 'Would you like extra care time?', ['Yes', 'No']],
+                      ].map(([key, question, options]) => <View key={key} style={{ marginBottom: s(13) }}>
+                        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY, marginBottom: s(7) }}>{question}</Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{options.map((option, index) => {
+                          const answer = key === 'play' || key === 'needsCare' ? option.toLowerCase() : String(index + 1);
+                          return <TouchableOpacity key={option} onPress={() => setPlanAnswers((current) => ({ ...current, [key]: answer }))} style={{ flex: 1, minWidth: 0, minHeight: s(48), backgroundColor: planAnswers[key] === answer ? NAVY : SURFACE, borderRadius: 8, padding: s(9), marginRight: index < options.length - 1 ? s(6) : 0, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: planAnswers[key] === answer ? WHITE : NAVY, textAlign: 'center' }}>{option}</Text></TouchableOpacity>;
+                        })}</View>
+                      </View>)}
+                    </ScrollView>
                   )}
-                  <Button title={dailyPlan ? 'Close' : (planSaving ? 'Building...' : 'Build my schedule')} onPress={dailyPlan ? () => setPlanVisible(false) : saveDailyPlan} disabled={!dailyPlan && (Object.values(planAnswers).some((answer) => !answer) || planSaving)} loading={!dailyPlan && planSaving} style={{ marginTop: s(8), marginBottom: s(8) }} />
+                  <Button title={dailyPlan ? 'Close' : (planSaving ? 'Building' : 'Build my schedule')} onPress={dailyPlan ? () => setPlanVisible(false) : saveDailyPlan} disabled={!dailyPlan && (Object.values(planAnswers).some((answer) => !answer) || planSaving)} loading={!dailyPlan && planSaving} style={{ marginTop: s(8), marginBottom: s(8) }} />
                   {!dailyPlan && <Button title="Cancel" onPress={() => setPlanVisible(false)} style={{ backgroundColor: MUTED }} />}
                 </View>
               </View>
             </KeyboardAvoidingView>
           </Modal>
 
-          <Modal visible={vitalsVisible} animationType="slide" transparent>
+          <Modal onRequestClose={() => { if (vitalLoading) return; setVitalsVisible(false); }} visible={vitalsVisible} animationType="slide" transparent>
             <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(15,44,107,0.45)' }}>
               <View style={{ backgroundColor: WHITE, borderRadius: 10, padding: s(24), width: '88%' }}>
@@ -746,10 +939,10 @@ export default function PatientHomeScreen({ route, navigation }) {
                     </TouchableOpacity>
                   ))}
                 </View>
-                {vitalType && (
-                  <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(18), color: NAVY, marginBottom: s(16) }} placeholder="Value" placeholderTextColor={PLACEHOLDER} value={vitalValue} onChangeText={setVitalValue} keyboardType="default" />
+                {!!vitalType && (
+                  <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(18), color: NAVY, marginBottom: s(16) }} placeholder="Value" placeholderTextColor={PLACEHOLDER} value={vitalValue} onChangeText={value => { setVitalValue(value); setVitalError(''); }} keyboardType="default" />
                 )}
-                <Button title={vitalLoading ? 'Logging...' : 'Log'} onPress={handleLogVital} disabled={!vitalType || !vitalValue.trim() || vitalLoading} loading={vitalLoading} style={{ borderRadius: 8, marginBottom: s(8) }} />
+                <Button title={vitalLoading ? 'Logging' : 'Log'} onPress={handleLogVital} disabled={!vitalType || !vitalValue.trim() || vitalLoading} loading={vitalLoading} style={{ borderRadius: 8, marginBottom: s(8) }} />
                 <Button title="Cancel" onPress={() => { if (vitalLoading) return; setVitalsVisible(false); setVitalType(''); setVitalValue(''); setVitalError(''); }} style={{ backgroundColor: MUTED, borderRadius: 8 }} />
               </View>
               </View>
@@ -763,7 +956,7 @@ export default function PatientHomeScreen({ route, navigation }) {
           onPress={handleCallCaregiver}
           accessibilityRole="button"
           accessibilityLabel="Call caregiver"
-          style={{ backgroundColor: NAVY, minHeight: s(58), borderRadius: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}
+          style={{ backgroundColor: NAVY, minHeight: s(58), borderRadius: 6, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}
         >
           <Ionicons name="call" size={s(24)} color={WHITE} style={{ marginRight: s(10) }} />
           <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: WHITE }}>Call Caregiver</Text>

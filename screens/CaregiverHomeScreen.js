@@ -1,17 +1,20 @@
-import React, { useState, useCallback } from 'react';
+import { signOutWithCleanup } from '../lib/session';
+import { appAlert as Alert } from '../components/AppDialog';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
   Image,
   FlatList,
+  ScrollView,
   useWindowDimensions,
   RefreshControl,
-  Alert,
   TextInput,
   Modal,
   TouchableOpacity,
   ActivityIndicator,
+  AppState,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -21,7 +24,8 @@ import * as Crypto from 'expo-crypto';
 import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
 import { displayTime } from '../lib/dailyPlan';
-const { localDateKey } = require('../lib/localDate');
+const { localDateKey, advanceCalendarSelection } = require('../lib/localDate');
+const { pairingCodeStatus } = require('../lib/pairingCodeStatus');
 import { scheduleCaregiverMedicationReminders } from '../lib/notifications';
 import {
   NAVY,
@@ -65,15 +69,16 @@ async function getPatientSummaries(patientIds) {
   const todayStartIso = todayStart.toISOString();
   const todayKey = localDateKey(todayStart);
 
-  const [medsRes, schedRes, tasksRes, medLogRes, taskCompRes, moodRes] = await Promise.all([
+  const [medsRes, schedRes, tasksRes, medLogRes, taskCompRes, moodRes, safetyRes] = await Promise.all([
     supabase.from('medications').select('id, patient_id, total_pills, pills_remaining, refill_alert_at').in('patient_id', patientIds),
     supabase.from('medication_schedule').select('id, medication_id, patient_id, days').in('patient_id', patientIds).eq('active', true),
     supabase.from('tasks').select('id, patient_id, days').in('patient_id', patientIds).eq('active', true),
     supabase.from('medication_log').select('medication_id, schedule_id, patient_id, status').in('patient_id', patientIds).eq('log_day', todayKey),
     supabase.from('task_completion').select('task_id, patient_id, status').in('patient_id', patientIds).eq('completion_day', todayKey),
     supabase.from('mood_logs').select('patient_id, mood, logged_at').in('patient_id', patientIds).gte('logged_at', todayStartIso).order('logged_at', { ascending: false }),
+    supabase.from('safety_checkins').select('patient_id, status, created_at').in('patient_id', patientIds).order('created_at', { ascending: false }),
   ]);
-  const summaryError = [medsRes, schedRes, tasksRes, medLogRes, taskCompRes, moodRes].find((result) => result.error)?.error;
+  const summaryError = [medsRes, schedRes, tasksRes, medLogRes, taskCompRes, moodRes, safetyRes].find((result) => result.error)?.error;
   if (summaryError) throw summaryError;
 
   const meds = medsRes.data || [];
@@ -82,6 +87,7 @@ async function getPatientSummaries(patientIds) {
   const medLogs = medLogRes.data || [];
   const taskComps = taskCompRes.data || [];
   const moodLogs = moodRes.data || [];
+  const safetyCheckins = safetyRes.data || [];
 
   const summaries = {};
 
@@ -122,12 +128,14 @@ async function getPatientSummaries(patientIds) {
       [...todayTaskIds].filter((id) => tasksDone.has(id)).length;
 
     const lowStockCount = patientMeds.filter(
-      (m) => m.total_pills && m.pills_remaining !== null && m.pills_remaining <= (m.refill_alert_at || 10)
+      (m) => m.total_pills != null && m.pills_remaining != null && m.pills_remaining <= (m.refill_alert_at ?? 10)
     ).length;
 
     const moodToday = moodLogs.find((l) => l.patient_id === patientId)?.mood || null;
+    const latestSafety = safetyCheckins.find((checkin) => checkin.patient_id === patientId) || null;
+    const missedMedicationCount = patientMedLogs.filter((log) => log.status === 'missed').length;
 
-    summaries[patientId] = { routineTotal, routineDone, lowStockCount, moodToday };
+    summaries[patientId] = { routineTotal, routineDone, lowStockCount, moodToday, latestSafety, missedMedicationCount };
   }
 
   return summaries;
@@ -140,12 +148,16 @@ export default function CaregiverHomeScreen({ navigation }) {
   const [appointments, setAppointments] = useState([]);
   const [calendarRoutines, setCalendarRoutines] = useState([]);
   const [selectedDate, setSelectedDate] = useState(localDateKey(new Date()));
+  const [todayKey, setTodayKey] = useState(localDateKey(new Date()));
+  const loadedDay = React.useRef(localDateKey(new Date()));
   const [homeError, setHomeError] = useState('');
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [newPatientName, setNewPatientName] = useState('');
+  const [newPatientBirthDate, setNewPatientBirthDate] = useState('');
+  const [newEmergencyContactName, setNewEmergencyContactName] = useState('');
   const [newPatientPhone, setNewPatientPhone] = useState('');
   const [addLoading, setAddLoading] = useState(false);
 
@@ -203,9 +215,11 @@ export default function CaregiverHomeScreen({ navigation }) {
       const unpairedCodes = base.filter((patient) => patient.created_by === user.id && !patient.paired_user_id && patient.pair_code).map((patient) => patient.pair_code);
       if (unpairedCodes.length) {
         const { data: codes, error: codesError } = await supabase.from('pairing_codes').select('code, expires_at, used').in('code', unpairedCodes);
-        if (codesError) throw codesError;
+        if (codesError) setHomeError('Could not check pairing codes. Refresh to try again.');
         const codeByValue = new Map((codes || []).map((row) => [row.code, row]));
-        base.forEach((patient) => { patient.codeExpired = !patient.paired_user_id && (!codeByValue.has(patient.pair_code) || codeByValue.get(patient.pair_code).used || new Date(codeByValue.get(patient.pair_code).expires_at) <= new Date()); });
+        base.forEach((patient) => {
+          if (patient.created_by === user.id) patient.pairingStatus = pairingCodeStatus(patient, codesError ? null : codeByValue.get(patient.pair_code));
+        });
       }
       if (patientIds.length) {
         const start = new Date();
@@ -244,10 +258,8 @@ export default function CaregiverHomeScreen({ navigation }) {
         ...(medicationRows || []).filter((row) => !scheduledMedicationIds.has(row.id)).map((row) => ({ patientId: row.patient_id, patientName: patientNames.get(row.patient_id) || 'Patient', title: row.name, time: null, days: null, kind: 'Medicine' })),
         ...(taskRows || []).map((row) => ({ patientId: row.patient_id, patientName: patientNames.get(row.patient_id) || 'Patient', title: row.title, time: row.time, days: row.days, kind: 'Task' })),
       ]);
-      const today = DAYS[new Date().getDay()];
       scheduleCaregiverMedicationReminders((scheduleRows || [])
-        .filter((schedule) => Array.isArray(schedule.days) ? schedule.days.includes(today) : String(schedule.days || '').includes(today))
-        .map((schedule) => ({ patientId: schedule.patient_id, patientName: patientNames.get(schedule.patient_id) || 'Your patient', medicationName: medicationNames.get(schedule.medication_id) || 'medicine', time: String(schedule.time).slice(0, 5) })))
+        .map((schedule) => ({ patientId: schedule.patient_id, patientName: patientNames.get(schedule.patient_id) || 'Your patient', medicationName: medicationNames.get(schedule.medication_id) || 'medicine', time: String(schedule.time).slice(0, 5), days: schedule.days })), user.id)
         .catch(() => {});
       setPatients(base.map((patient) => ({
         ...patient,
@@ -261,7 +273,7 @@ export default function CaregiverHomeScreen({ navigation }) {
         const summaries = await getPatientSummaries(base.map((p) => p.id));
         setPatients(base.map((patient) => ({
           ...patient,
-          ...(summaries[patient.id] || { routineTotal: 0, routineDone: 0, lowStockCount: 0, moodToday: null }),
+          ...(summaries[patient.id] || { routineTotal: 0, routineDone: 0, lowStockCount: 0, moodToday: null, latestSafety: null, missedMedicationCount: 0 }),
         })));
       } catch (summaryErr) {
         console.error('getPatientSummaries failed', summaryErr);
@@ -274,9 +286,39 @@ export default function CaregiverHomeScreen({ navigation }) {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => {
+  const refreshForNewDay = useCallback(() => {
+    const today = localDateKey(new Date());
+    if (today === loadedDay.current) return false;
+    const previous = loadedDay.current;
+    loadedDay.current = today;
+    setTodayKey(today);
+    setSelectedDate(selected => advanceCalendarSelection(selected, previous, today));
     fetchPatients().finally(() => setInitialLoading(false));
-  }, [fetchPatients]));
+    return true;
+  }, [fetchPatients]);
+
+  useFocusEffect(useCallback(() => {
+    if (!refreshForNewDay()) fetchPatients().finally(() => setInitialLoading(false));
+  }, [fetchPatients, refreshForNewDay]));
+
+  useEffect(() => {
+    const timer = setInterval(refreshForNewDay, 30000);
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') refreshForNewDay();
+    });
+    return () => { clearInterval(timer); subscription.remove(); };
+  }, [refreshForNewDay]);
+
+  useEffect(() => {
+    if (!caregiverId) return;
+    let timer;
+    const channel = supabase.channel(`caregiver-safety-${caregiverId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'safety_checkins' }, () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fetchPatients(), 300);
+      }).subscribe();
+    return () => { clearTimeout(timer); supabase.removeChannel(channel); };
+  }, [caregiverId, fetchPatients]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -288,11 +330,10 @@ export default function CaregiverHomeScreen({ navigation }) {
   };
 
 
-  const alertCount = patients.filter((p) => p.lowStockCount > 0).length;
+  const alertCount = patients.filter((p) => p.lowStockCount > 0 || p.missedMedicationCount > 0 || ['needs_help', 'urgent'].includes(p.latestSafety?.status)).length;
   const routineInProgressCount = patients.filter((p) => p.routineTotal > 0 && p.routineDone < p.routineTotal).length;
   const calendarDays = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setHours(12, 0, 0, 0);
+    const date = new Date(`${todayKey}T12:00:00`);
     date.setDate(date.getDate() + index);
     return { key: localDateKey(date), label: date.toLocaleDateString(undefined, { weekday: 'short' }), number: date.getDate() };
   });
@@ -328,6 +369,7 @@ export default function CaregiverHomeScreen({ navigation }) {
         .from('patients')
         .insert({
           name,
+          birth_date: newPatientBirthDate.trim() || null,
           created_by: user.id,
           pair_code: code,
         })
@@ -346,7 +388,7 @@ export default function CaregiverHomeScreen({ navigation }) {
           .from('emergency_contacts')
           .insert({
             patient_id: patient.id,
-            name: 'Emergency contact',
+            name: newEmergencyContactName.trim() || 'Emergency contact',
             phone: newPatientPhone.trim(),
             priority: 1,
           });
@@ -364,6 +406,8 @@ export default function CaregiverHomeScreen({ navigation }) {
       setAddModalVisible(false);
       setSuccessCode({ name, code });
       setNewPatientName('');
+      setNewPatientBirthDate('');
+      setNewEmergencyContactName('');
       setNewPatientPhone('');
 
       try {
@@ -439,28 +483,17 @@ export default function CaregiverHomeScreen({ navigation }) {
     );
   };
 
-  const handleSignOut = () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: async () => {
-          const { error } = await supabase.auth.signOut();
-          if (error) {
-            console.error('signOut failed', error);
-            Alert.alert('Error', 'Could not sign out. Please try again.');
-            return;
-          }
-          navigation.reset({ index: 0, routes: [{ name: 'Landing' }] });
-        },
-      },
-    ]);
+  const handleSignOut = async () => {
+    try {
+      await signOutWithCleanup();
+      navigation.reset({ index: 0, routes: [{ name: 'Landing' }] });
+    } catch (error) { Alert.alert('Could not sign out', error.message || 'Please try again.'); }
   };
 
   const renderPatient = ({ item }) => {
     const paired = !!item.paired_user_id;
     const isOwner = item.created_by === caregiverId;
+    const codeStatus = item.pairingStatus || pairingCodeStatus(item, null);
     const hasRoutine = item.routineTotal > 0;
     const routineComplete = hasRoutine && item.routineDone >= item.routineTotal;
 
@@ -470,7 +503,7 @@ export default function CaregiverHomeScreen({ navigation }) {
         onPress={() => navigation.navigate('PatientDetail', { patientId: item.id, patientName: item.name, canEdit: item.permissionLevel !== 'viewer' })}
         onLongPress={() => isOwner && handleRemovePatient(item)}
         accessibilityLabel={`${item.name} care plan${item.lowStockCount > 0 ? ', medication running low' : ''}`}
-        style={[styles.card, { padding: s(16), borderRadius: 14, marginBottom: s(12) }]}
+        style={[styles.card, { padding: s(16), borderRadius: 6, marginBottom: s(12) }]}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={[styles.avatar, { width: s(46), height: s(46), borderRadius: s(23) }]}>
@@ -495,7 +528,7 @@ export default function CaregiverHomeScreen({ navigation }) {
                 color={paired ? SUCCESS : MUTED}
               />
               <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: paired ? SUCCESS : MUTED, marginLeft: s(4) }}>
-                {paired ? 'Connected' : !isOwner ? 'Not connected' : item.codeExpired ? 'Code expired' : `Code ${item.pair_code}`}
+                {paired ? 'Connected' : !isOwner ? 'Not connected' : codeStatus.label}
               </Text>
             </View>
           </View>
@@ -508,7 +541,8 @@ export default function CaregiverHomeScreen({ navigation }) {
           </View>
           <Ionicons name="chevron-forward" size={s(18)} color={PLACEHOLDER} style={{ marginLeft: s(4) }} />
         </View>
-        {!paired && isOwner && <TouchableOpacity onPress={() => handleResetPairing(item)} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingVertical: s(8) }}><Text style={{ color: NAVY, fontFamily: 'DMSans_500Medium', fontSize: s(12) }}>Code expired or not working? Get a new code</Text></TouchableOpacity>}
+        {!paired && isOwner && codeStatus.state === 'valid' && <Text style={{ color: MUTED, fontSize: s(12), marginTop: s(6) }}>Expires {new Date(codeStatus.expiresAt).toLocaleString()}</Text>}
+        {!paired && isOwner && <TouchableOpacity disabled={addLoading} onPress={() => handleResetPairing(item)} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingVertical: s(8) }}><Text style={{ color: NAVY, fontFamily: 'DMSans_500Medium', fontSize: s(12) }}>Get a new pairing code</Text></TouchableOpacity>}
 
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: s(15), paddingTop: s(12), borderTopWidth: 1, borderTopColor: BORDER }}>
           {hasRoutine ? (
@@ -545,6 +579,31 @@ export default function CaregiverHomeScreen({ navigation }) {
               ⚠ {item.lowStockCount} medication{item.lowStockCount > 1 ? 's' : ''} running low
             </Text>
           </View>
+        )}
+        {item.missedMedicationCount > 0 && (
+          <View style={[styles.chip, { backgroundColor: WARNING_BG, marginTop: s(10), alignSelf: 'flex-start', paddingHorizontal: s(8), paddingVertical: s(4), borderRadius: 6 }]}>
+            <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: WARNING }}>
+              {item.missedMedicationCount} medication dose{item.missedMedicationCount > 1 ? 's' : ''} missed today
+            </Text>
+          </View>
+        )}
+        {item.latestSafety && ['needs_help', 'urgent'].includes(item.latestSafety.status) && (
+          <View style={[styles.chip, { backgroundColor: item.latestSafety.status === 'urgent' ? DANGER_BG : WARNING_BG, marginTop: s(10), alignSelf: 'flex-start', paddingHorizontal: s(8), paddingVertical: s(4), borderRadius: 6 }]}>
+            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(13), color: item.latestSafety.status === 'urgent' ? DANGER : WARNING }}>
+              {item.latestSafety.status === 'urgent' ? 'Urgent help requested' : 'Patient says they need help'}
+            </Text>
+          </View>
+        )}
+        {isOwner && (
+          <TouchableOpacity
+            onPress={() => handleRemovePatient(item)}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${item.name}`}
+            style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', paddingVertical: s(9), marginTop: s(4) }}
+          >
+            <Ionicons name="trash-outline" size={s(17)} color={DANGER} style={{ marginRight: s(6) }} />
+            <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: DANGER }}>Delete patient</Text>
+          </TouchableOpacity>
         )}
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: s(12) }}>
           <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(13), color: NAVY }}>View care plan</Text>
@@ -583,11 +642,11 @@ export default function CaregiverHomeScreen({ navigation }) {
                 <TouchableOpacity
                   onPress={() => navigation.navigate('Profile')}
                   accessibilityRole="button"
-                  accessibilityLabel="Open profile"
+                  accessibilityLabel="Open settings"
                   style={[styles.iconBtn, { width: s(40), height: s(40), borderRadius: s(20), marginLeft: s(8) }]}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <Ionicons name="person-circle-outline" size={s(22)} color={NAVY} />
+                  <Ionicons name="settings-outline" size={s(22)} color={NAVY} />
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={handleSignOut}
@@ -605,19 +664,20 @@ export default function CaregiverHomeScreen({ navigation }) {
               Good {greeting}{caregiverName ? `, ${caregiverName}` : ''}
             </Text>
             {!!homeError && <Text style={{ color: DANGER, marginTop: s(10), fontFamily: 'DMSans_500Medium' }}>{homeError}</Text>}
+            <Button title="Family updates / Join family" onPress={() => navigation.navigate('Family')} style={{ marginTop: s(14) }} />
 
-            <View style={{ marginTop: s(18), backgroundColor: SURFACE, borderRadius: 14, padding: s(14) }}>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginBottom: s(10) }}>Calendar · next 7 days</Text>
+            <View style={{ marginTop: s(18), backgroundColor: SURFACE, borderRadius: 6, padding: s(14) }}>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginBottom: s(10) }}>Calendar, next 7 days</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                 {calendarDays.map((day) => <TouchableOpacity key={day.key} onPress={() => setSelectedDate(day.key)} accessibilityRole="button" accessibilityState={{ selected: selectedDate === day.key }} style={{ alignItems: 'center', paddingVertical: s(8), paddingHorizontal: s(5), borderRadius: 8, backgroundColor: selectedDate === day.key ? NAVY : WHITE }}><Text style={{ color: selectedDate === day.key ? WHITE : MUTED, fontSize: s(11) }}>{day.label}</Text><Text style={{ color: selectedDate === day.key ? WHITE : NAVY, fontFamily: 'DMSans_700Bold', fontSize: s(16) }}>{day.number}</Text></TouchableOpacity>)}
               </View>
-              {selectedAppointments.map((item) => <TouchableOpacity key={item.id} onPress={() => navigation.navigate('Appointments', { patientId: item.patient_id, isPatient: !item.canEdit })} style={{ padding: s(9), marginTop: s(8), backgroundColor: WHITE, borderRadius: 8 }}><Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold' }}>{new Date(item.appointment_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · {item.title}</Text><Text style={{ color: MUTED }}>Appointment · {item.patientName}{item.completed ? ' · Completed' : ''}</Text></TouchableOpacity>)}
-              {selectedRoutines.map((item, index) => <TouchableOpacity key={`${item.kind}-${item.patientId}-${index}`} onPress={() => navigation.navigate('PatientDetail', { patientId: item.patientId, patientName: item.patientName, canEdit: patients.find((patient) => patient.id === item.patientId)?.permissionLevel !== 'viewer', initialTab: item.kind === 'Medicine' ? 'Medications' : 'Tasks' })} style={{ padding: s(9), marginTop: s(8), backgroundColor: WHITE, borderRadius: 8 }}><Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold' }}>{item.time ? `${displayTime(String(item.time).slice(0, 5))} · ` : ''}{item.title}</Text><Text style={{ color: MUTED }}>{item.kind} · {item.patientName}</Text></TouchableOpacity>)}
+              {selectedAppointments.map((item) => <TouchableOpacity key={item.id} onPress={() => navigation.navigate('Appointments', { patientId: item.patient_id, isPatient: !item.canEdit })} style={{ padding: s(9), marginTop: s(8), backgroundColor: WHITE, borderRadius: 8 }}><Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold' }}>{new Date(item.appointment_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} {item.title}</Text><Text style={{ color: MUTED }}>Appointment, {item.patientName}{item.completed ? ', Completed' : ''}</Text></TouchableOpacity>)}
+              {selectedRoutines.map((item, index) => <TouchableOpacity key={`${item.kind}-${item.patientId}-${index}`} onPress={() => navigation.navigate('PatientDetail', { patientId: item.patientId, patientName: item.patientName, canEdit: patients.find((patient) => patient.id === item.patientId)?.permissionLevel !== 'viewer', initialTab: item.kind === 'Medicine' ? 'Medications' : 'Tasks' })} style={{ padding: s(9), marginTop: s(8), backgroundColor: WHITE, borderRadius: 8 }}><Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold' }}>{item.time ? `${displayTime(String(item.time).slice(0, 5))} ` : ''}{item.title}</Text><Text style={{ color: MUTED }}>{item.kind}, {item.patientName}</Text></TouchableOpacity>)}
               {!selectedAppointments.length && !selectedRoutines.length && <Text style={{ color: MUTED, marginTop: s(10) }}>Nothing scheduled on this day</Text>}
             </View>
 
             {patients.length > 0 && (
-              <View style={{ marginTop: s(16), backgroundColor: SURFACE, borderRadius: 14, padding: s(14) }}>
+              <View style={{ marginTop: s(16), backgroundColor: SURFACE, borderRadius: 6, padding: s(14) }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <View>
                     <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: MUTED }}>Today</Text>
@@ -667,16 +727,16 @@ export default function CaregiverHomeScreen({ navigation }) {
         }
       />
 
-      <Modal visible={addModalVisible} animationType="slide" transparent>
+      <Modal onRequestClose={() => { if (addLoading) return; setAddModalVisible(false); }} visible={addModalVisible} animationType="slide" transparent>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <View style={styles.modalOverlay}>
+          <ScrollView style={{ flex: 1, backgroundColor: 'rgba(15,44,107,0.45)' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: s(24) }} keyboardShouldPersistTaps="handled">
           <View style={[styles.modalCard, { borderRadius: 10, padding: s(24) }]}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: s(16) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY }}>
                 Add Patient
               </Text>
               <TouchableOpacity
-                onPress={() => { setAddModalVisible(false); setNewPatientName(''); setNewPatientPhone(''); }}
+                onPress={() => { setAddModalVisible(false); setNewPatientName(''); setNewPatientBirthDate(''); setNewEmergencyContactName(''); setNewPatientPhone(''); }}
                 accessibilityRole="button"
                 accessibilityLabel="Close add patient dialog"
                 style={[styles.iconBtn, { width: s(32), height: s(32), borderRadius: s(16) }]}
@@ -692,9 +752,33 @@ export default function CaregiverHomeScreen({ navigation }) {
               placeholderTextColor={PLACEHOLDER}
               value={newPatientName}
               onChangeText={setNewPatientName}
+              autoCapitalize="words"
+              returnKeyType="next"
             />
 
-            <Text style={[styles.label, { fontSize: s(14), marginBottom: s(4) }]}>Phone (optional)</Text>
+            <Text style={[styles.label, { fontSize: s(14), marginBottom: s(4) }]}>Date of birth (optional)</Text>
+            <TextInput
+              style={[styles.input, { borderRadius: 8, padding: s(12), fontSize: s(16), marginBottom: s(12) }]}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={PLACEHOLDER}
+              value={newPatientBirthDate}
+              onChangeText={setNewPatientBirthDate}
+              keyboardType="numbers-and-punctuation"
+              returnKeyType="next"
+            />
+
+            <Text style={[styles.label, { fontSize: s(14), marginBottom: s(4) }]}>Emergency contact name (optional)</Text>
+            <TextInput
+              style={[styles.input, { borderRadius: 8, padding: s(12), fontSize: s(16), marginBottom: s(12) }]}
+              placeholder="e.g. Jane Smith"
+              placeholderTextColor={PLACEHOLDER}
+              value={newEmergencyContactName}
+              onChangeText={setNewEmergencyContactName}
+              autoCapitalize="words"
+              returnKeyType="next"
+            />
+
+            <Text style={[styles.label, { fontSize: s(14), marginBottom: s(4) }]}>Emergency contact phone (optional)</Text>
             <TextInput
               style={[styles.input, { borderRadius: 8, padding: s(12), fontSize: s(16), marginBottom: s(16) }]}
               placeholder="+1 555 555 5555"
@@ -702,10 +786,11 @@ export default function CaregiverHomeScreen({ navigation }) {
               value={newPatientPhone}
               onChangeText={setNewPatientPhone}
               keyboardType="phone-pad"
+              returnKeyType="done"
             />
 
             <Button
-              title={addLoading ? 'Adding...' : 'Add Patient'}
+              title={addLoading ? 'Adding' : 'Add Patient'}
               onPress={handleAddPatient}
               disabled={!newPatientName.trim() || addLoading}
               loading={addLoading}
@@ -713,16 +798,16 @@ export default function CaregiverHomeScreen({ navigation }) {
             />
             <Button
               title="Cancel"
-              onPress={() => { setAddModalVisible(false); setNewPatientName(''); setNewPatientPhone(''); }}
+              onPress={() => { setAddModalVisible(false); setNewPatientName(''); setNewPatientBirthDate(''); setNewEmergencyContactName(''); setNewPatientPhone(''); }}
               style={{ backgroundColor: SURFACE_MUTED }}
               textStyle={{ color: TEXT_DARK }}
             />
           </View>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal visible={!!successCode} animationType="fade" transparent>
+      <Modal onRequestClose={() => { setSuccessCode(null); }} visible={!!successCode} animationType="fade" transparent>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { borderRadius: 10, padding: s(24), alignItems: 'center' }]}>
             <View style={[styles.avatar, { width: s(52), height: s(52), borderRadius: s(26), backgroundColor: SUCCESS_BG }]}>
@@ -752,11 +837,6 @@ const styles = StyleSheet.create({
     backgroundColor: WHITE,
     borderWidth: 1,
     borderColor: BORDER,
-    shadowColor: '#0F2C6B',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 1,
   },
   avatar: {
     backgroundColor: NAVY,
