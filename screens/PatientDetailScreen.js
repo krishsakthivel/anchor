@@ -505,7 +505,60 @@ function DailyScheduleTab({ patientId, canEdit }) {
   const [placeBusy, setPlaceBusy] = useState(false);
   const [placeError, setPlaceError] = useState('');
   const [checkins, setCheckins] = useState([]);
-  const today = localDateKey(new Date());
+  const [editingBlock, setEditingBlock] = useState(null);
+  const [blockTitle, setBlockTitle] = useState('');
+  const [blockTime, setBlockTime] = useState('');
+  const [blockMinutes, setBlockMinutes] = useState('');
+  const [editError, setEditError] = useState('');
+  const editSaving = React.useRef(false);
+
+  const openBlockEditor = (block, index) => {
+    if (!canEdit || saving || !plan) return;
+    setEditingBlock({ index, planId: plan.id, date: plan.plan_date, original: JSON.stringify(block) });
+    setBlockTitle(block.title || planLabels[block.type] || 'Activity');
+    setBlockTime(String(block.start || '').slice(0, 5));
+    setBlockMinutes(String(block.minutes ?? 0));
+    setEditError('');
+  };
+
+  const closeBlockEditor = () => {
+    if (editSaving.current) return;
+    setEditingBlock(null);
+    setEditError('');
+  };
+
+  const saveBlock = async () => {
+    if (!canEdit || !editingBlock || editSaving.current || saving) return;
+    const title = blockTitle.trim();
+    const minutes = Number(blockMinutes.trim());
+    if (!title) { setEditError('Enter an activity name.'); return; }
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(blockTime)) { setEditError('Choose a valid start time.'); return; }
+    if (!/^\d+$/.test(blockMinutes.trim()) || !Number.isInteger(minutes) || minutes > 1440) { setEditError('Enter a duration from 0 to 1440 whole minutes.'); return; }
+    editSaving.current = true;
+    setSaving(true);
+    setEditError('');
+    try {
+      if (editingBlock.date !== localDateKey(new Date())) throw new Error('This schedule is from a previous day. Close the editor and refresh the schedule.');
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) throw new Error('Please sign in again before editing the schedule.');
+      const { data: latest, error: readError } = await supabase.from('daily_plans').select('*').eq('id', editingBlock.planId).eq('patient_id', patientId).eq('plan_date', editingBlock.date).single();
+      if (readError) throw readError;
+      if (!latest || JSON.stringify(latest.blocks?.[editingBlock.index]) !== editingBlock.original) throw new Error('This activity changed while you were editing. Close the editor, refresh, and try again.');
+      const blocks = latest.blocks.map((block, index) => index === editingBlock.index ? { ...block, title, start: blockTime, minutes } : block);
+      let request = supabase.from('daily_plans').update({ blocks, overridden_by: user.id, updated_at: new Date().toISOString() }).eq('id', latest.id).eq('patient_id', patientId).eq('plan_date', editingBlock.date);
+      if (latest.updated_at) request = request.eq('updated_at', latest.updated_at);
+      const { data, error } = await request.select().single();
+      if (error) throw error;
+      if (!data) throw new Error('The schedule changed or could not be saved. Refresh and try again.');
+      setPlan(data);
+      setEditingBlock(null);
+    } catch (error) {
+      setEditError(error.message || 'Could not save this activity. Please try again.');
+    } finally {
+      editSaving.current = false;
+      setSaving(false);
+    }
+  };
 
   const fetchPlan = async () => {
     const { data, error } = await supabase.from('daily_plans').select('*').eq('patient_id', patientId).eq('plan_date', localDateKey(new Date())).maybeSingle();
@@ -606,7 +659,7 @@ function DailyScheduleTab({ patientId, canEdit }) {
       {(plan?.blocks || []).map((block, index) => {
         const checkin = checkins.find(item => item.block_index === index);
         return <CareCard key={`${block.start}-${index}`} scale={s}>
-          <CareCardHeader title={block.title || planLabels[block.type] || 'Activity'} subtitle={`${block.minutes} minutes`} icon={block.type === 'medicine' ? 'medical-outline' : 'calendar-outline'} scale={s} />
+          <CareCardHeader title={block.title || planLabels[block.type] || 'Activity'} subtitle={`${block.minutes} minutes`} icon={block.type === 'medicine' ? 'medical-outline' : 'calendar-outline'} scale={s} action={canEdit && <CareAction label="Edit" accessibilityLabel={'Edit schedule activity ' + (block.title || planLabels[block.type] || 'Activity')} disabled={saving} onPress={() => openBlockEditor(block, index)} scale={s} />} />
           <CareInset scale={s}>
             <CareMeta title={displayTime(block.start)} detail={block.location_name || 'No place assigned'} scale={s} />
             {!!checkin && <CareMeta icon="checkmark-circle-outline" title={'Arrived at ' + new Date(checkin.checked_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} scale={s} />}
@@ -624,6 +677,25 @@ function DailyScheduleTab({ patientId, canEdit }) {
         <Button title="Add place" onPress={addPlace} disabled={!placeName.trim() || placeBusy} style={{ marginBottom: s(10) }} />
         {places.map(place => <View key={place.id} style={{ paddingVertical: s(8), borderTopWidth: 1, borderColor: BORDER, flexDirection: 'row', alignItems: 'center', gap: s(8) }}><Text style={{ flex: 1, color: NAVY, fontFamily: 'DMSans_500Medium' }}>{place.name}</Text><CareAction label="Write sticker" accessibilityLabel={'Write sticker for ' + place.name} disabled={placeBusy} onPress={() => programSticker(place)} scale={s} /></View>)}
       </CareCard>}
+      <Modal visible={editingBlock !== null} transparent animationType="slide" onRequestClose={closeBlockEditor}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: s(16), backgroundColor: 'rgba(0,0,0,0.5)' }}>
+            <ScrollView keyboardShouldPersistTaps="handled" style={{ flexGrow: 0, maxHeight: '90%', width: '100%', maxWidth: 480, backgroundColor: WHITE, borderRadius: 12 }} contentContainerStyle={{ padding: s(20) }}>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(8) }}>Edit schedule activity</Text>
+              <CareBody scale={s}>Changes apply to today's schedule only. Other activities keep their times.</CareBody>
+              {plan?.blocks?.[editingBlock?.index]?.type === 'medicine' && <CareBody scale={s}>This changes the schedule activity only. Medication dose times and reminders stay the same.</CareBody>}
+              <CareError message={editError} scale={s} />
+              <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Activity name</Text>
+              <TextInput accessibilityLabel="Activity name" value={blockTitle} onChangeText={setBlockTitle} editable={!saving} maxLength={120} style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: NAVY, borderWidth: 1, borderColor: BORDER, borderRadius: 8, padding: s(12), marginBottom: s(12) }} />
+              <TimePickerInput key={editingBlock ? `${editingBlock.planId}-${editingBlock.index}` : 'closed'} label="Start time" value={blockTime} onChange={setBlockTime} />
+              <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Duration (minutes)</Text>
+              <TextInput accessibilityLabel="Duration in minutes" value={blockMinutes} onChangeText={setBlockMinutes} editable={!saving} keyboardType="number-pad" maxLength={4} style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: NAVY, borderWidth: 1, borderColor: BORDER, borderRadius: 8, padding: s(12), marginBottom: s(16) }} />
+              <Button title="Save changes" onPress={saveBlock} loading={saving} disabled={saving || !blockTitle.trim() || !blockTime || !blockMinutes.trim()} style={{ marginBottom: s(8) }} />
+              <Button title="Cancel" onPress={closeBlockEditor} disabled={saving} style={{ backgroundColor: MUTED }} />
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </>
   );
 }
