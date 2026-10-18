@@ -1,4 +1,5 @@
 import React from 'react';
+import { CareCard } from './CarePlanUI';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { appAlert as Alert } from './AppDialog';
@@ -25,7 +26,7 @@ export default function MedicationCard({ medication, schedules, logs, canEdit, b
   ]);
 
   return (
-    <View style={{ backgroundColor: WHITE, borderWidth: 1, borderColor: BORDER, borderRadius: 12, padding: s(16), marginBottom: s(14) }}>
+    <CareCard scale={s}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: s(14) }}>
         <View style={{ width: s(40), height: s(40), borderRadius: 10, backgroundColor: SURFACE, alignItems: 'center', justifyContent: 'center', marginRight: s(12) }}>
           <Ionicons name="medical-outline" size={s(21)} color={NAVY} />
@@ -74,6 +75,6 @@ export default function MedicationCard({ medication, schedules, logs, canEdit, b
         </View>}
         {canEdit && <Ionicons name="chevron-forward" size={s(16)} color={MUTED} style={{ marginLeft: s(8) }} />}
       </TouchableOpacity>}
-    </View>
+    </CareCard>
   );
 }

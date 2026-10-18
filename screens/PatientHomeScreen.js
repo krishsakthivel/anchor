@@ -904,7 +904,7 @@ export default function PatientHomeScreen({ route, navigation }) {
                         ['sleep', 'How was your sleep?', ['Very bad', 'Okay', 'Good']],
                         ['feeling', 'How are you feeling?', ['Not well', 'Okay', 'Good']],
                         ['energy', 'How much energy do you have?', ['Low', 'Some', 'A lot']],
-                        ['play', 'Would you like play time?', ['Yes', 'No']],
+                        ['play', 'Would you like some activity time?', ['Yes', 'No']],
                         ['needsCare', 'Would you like extra care time?', ['Yes', 'No']],
                       ].map(([key, question, options]) => <View key={key} style={{ marginBottom: s(13) }}>
                         <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY, marginBottom: s(7) }}>{question}</Text>

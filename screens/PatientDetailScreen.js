@@ -22,11 +22,12 @@ import { supabase } from '../lib/supabase';
 import * as Crypto from 'expo-crypto';
 import Button from '../components/Button';
 import MedicationCard from '../components/MedicationCard';
+import { CareCard, CareCardHeader, CareSectionHeader, CareAction, CareBody, CareInset, CareMeta, CareEmpty, CareError } from '../components/CarePlanUI';
 import WeekdaySelector from '../components/WeekdaySelector';
 const { MEDICATION_DAYS, medicationScheduleError, medicationDaysLabel } = require('../lib/medicationSchedule');
 import TimePickerInput from '../components/TimePickerInput';
 import { writeLocationTag } from '../lib/nfc';
-import { NAVY, WHITE, PLACEHOLDER, SURFACE } from '../theme/colors';
+import { NAVY, WHITE, PLACEHOLDER, SURFACE, BORDER, MUTED, WARNING, DANGER } from '../theme/colors';
 import { displayTime, planLabels } from '../lib/dailyPlan';
 const { localDateKey } = require('../lib/localDate');
 
@@ -341,15 +342,10 @@ export default function PatientDetailScreen({ route, navigation }) {
       case 'Medications':
         return (
           <>
-            {!!actionError && <Text style={{ color: '#C0392B', marginBottom: s(10), fontSize: s(14) }}>{actionError}</Text>}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Medications</Text>
-              {canEdit && <TouchableOpacity onPress={() => setAddMedVisible(true)}>
-                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>+ Add</Text>
-              </TouchableOpacity>}
-            </View>
+            <CareError message={actionError} scale={s} />
+            <CareSectionHeader title="Medications" action={canEdit ? '+ Add' : null} onPress={() => setAddMedVisible(true)} scale={s} />
             {medications.length === 0 ? (
-              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No medications added yet</Text>
+              <CareEmpty title="No medications added yet" icon="medical-outline" detail="Medications and their schedules will appear here." scale={s} />
             ) : (
               medications.map(med => <MedicationCard key={med.id}
                 medication={med}
@@ -365,32 +361,15 @@ export default function PatientDetailScreen({ route, navigation }) {
       case 'Tasks':
         return (
           <>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Tasks</Text>
-              {canEdit && <TouchableOpacity onPress={() => openTaskForm()}>
-                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>+ Add</Text>
-              </TouchableOpacity>}
-            </View>
-            {tasks.length === 0 ? (
-              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No tasks added yet</Text>
-            ) : (
-              tasks.map((task) => (
-                <TouchableOpacity
-                  key={task.id}
-                  onLongPress={() => canEdit && handleDeleteTask(task.id)}
-                  style={{ backgroundColor: '#F5F5F5', padding: s(12), borderRadius: 8, marginBottom: s(8) }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: s(8) }}>
-                    <Text style={{ flex: 1, fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY }}>{task.title}</Text>
-                    {canEdit && <TouchableOpacity onPress={() => openTaskForm(task)} disabled={loading} accessibilityRole="button" accessibilityLabel={'Edit ' + task.title} style={{ minHeight: s(44), minWidth: s(48), justifyContent: 'center', alignItems: 'center' }}>
-                      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>Edit</Text>
-                    </TouchableOpacity>}
-                  </View>
-                  <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#6B7280', marginTop: s(4) }}>{task.days == null ? 'Every day' : medicationDaysLabel(task.days)}{task.time ? ' · ' + displayTime(String(task.time).slice(0, 5)) : ''}</Text>
-                  {!!task.description && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{task.description}</Text>}
-                </TouchableOpacity>
-              ))
-            )}
+            <CareSectionHeader title="Tasks" action={canEdit ? '+ Add' : null} onPress={() => openTaskForm()} scale={s} />
+            {tasks.length === 0 ? <CareEmpty title="No tasks added yet" icon="checkbox-outline" detail="Daily routines and reminders will appear here." scale={s} /> : tasks.map(task => (
+              <CareCard key={task.id} scale={s}>
+                <CareCardHeader title={task.title} icon="checkbox-outline" scale={s} action={canEdit && <CareAction label="Edit" accessibilityLabel={'Edit ' + task.title} onPress={() => openTaskForm(task)} disabled={loading} scale={s} />} />
+                {!!task.description && <CareBody scale={s}>{task.description}</CareBody>}
+                <CareInset scale={s}><CareMeta title={task.time ? displayTime(String(task.time).slice(0, 5)) : 'Any time'} detail={task.days == null ? 'Every day' : medicationDaysLabel(task.days)} scale={s} /></CareInset>
+                {canEdit && <View style={{ alignItems: 'flex-end', marginTop: s(6) }}><CareAction label="Delete task" onPress={() => handleDeleteTask(task.id)} disabled={loading} scale={s} /></View>}
+              </CareCard>
+            ))}
           </>
         );
 
@@ -620,32 +599,31 @@ function DailyScheduleTab({ patientId, canEdit }) {
 
   return (
     <>
-      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
-      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginBottom: s(5) }}>Today’s schedule</Text>
-      {!!placeError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{placeError}</Text>}
-      {!plan ? <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666', marginBottom: s(12) }}>The patient has not completed today’s check-in yet.</Text> : <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666', marginBottom: s(12) }}>{plan.overridden_by ? 'Adjusted by caregiver' : 'Built from the morning check-in'}</Text>}
-      <TouchableOpacity onPress={async () => { try { await fetchPlan(); await fetchPlaces(); setPlaceError(''); } catch (error) { setPlaceError(error.message || 'Could not refresh.'); } }} style={{ marginBottom: s(12) }}><Text style={{ color: NAVY, fontFamily: 'DMSans_500Medium' }}>Refresh schedule and check-ins</Text></TouchableOpacity>
-      {(plan?.blocks || []).map((block, index) => (
-        <View key={`${block.start}-${index}`} style={{ backgroundColor: SURFACE, borderRadius: 6, padding: s(12), marginBottom: s(8), flexDirection: 'row', alignItems: 'center' }}>
-          <Text style={{ width: s(66), fontFamily: 'DMSans_700Bold', fontSize: s(12), color: NAVY }}>{displayTime(block.start)}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>{block.title || planLabels[block.type]}</Text>
-            <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#666' }}>{block.minutes} minutes{block.location_name ? `, ${block.location_name}` : ''}</Text>
-            {checkins.some((item) => item.block_index === index) && <Text style={{ color: '#217346', fontFamily: 'DMSans_500Medium', marginTop: s(4) }}>Arrived at {new Date(checkins.find((item) => item.block_index === index).checked_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</Text>}
-            {canEdit && block.type !== 'medicine' && !checkins.some((item) => item.block_index === index) && places.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: s(7) }}>
-              {[null, ...places].map((place) => <TouchableOpacity key={place?.id || 'none'} disabled={saving} onPress={() => assignPlace(index, place)} style={{ backgroundColor: block.location_id === (place?.id || null) ? NAVY : WHITE, borderRadius: 6, paddingVertical: s(6), paddingHorizontal: s(8), marginRight: s(5) }}><Text style={{ color: block.location_id === (place?.id || null) ? WHITE : NAVY, fontSize: s(12) }}>{place?.name || 'No place'}</Text></TouchableOpacity>)}
-            </ScrollView>}
-          </View>
-          {canEdit && <View style={{ flexDirection: 'row' }}><TouchableOpacity disabled={saving} onPress={() => adjustBlock(index, -15)} style={{ padding: s(8) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY }}>−</Text></TouchableOpacity><TouchableOpacity disabled={saving} onPress={() => adjustBlock(index, 15)} style={{ padding: s(8) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY }}>+</Text></TouchableOpacity></View>}
-        </View>
-      ))}
-      {canEdit && <View style={{ marginTop: s(16), padding: s(14), backgroundColor: SURFACE, borderRadius: 6 }}>
-        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY }}>Places & NFC stickers</Text>
-        <Text style={{ color: '#666', marginTop: s(4), marginBottom: s(10) }}>Add a place, write its sticker, then select that place for an activity above.</Text>
-        <TextInput value={placeName} onChangeText={setPlaceName} placeholder="e.g. Game room" placeholderTextColor={PLACEHOLDER} maxLength={80} style={{ borderWidth: 1, borderColor: NAVY, borderRadius: 8, padding: s(10), backgroundColor: WHITE, color: NAVY, marginBottom: s(8) }} />
+      <CareError message={loadError || placeError} scale={s} />
+      <CareSectionHeader title="Today's schedule" scale={s} />
+      {!plan ? <CareEmpty title="No schedule yet" icon="calendar-outline" detail="The patient can build today's plan from their morning check-in." scale={s} /> : <CareBody scale={s}>{plan.overridden_by ? 'Adjusted by caregiver' : 'Built from the morning check-in'}</CareBody>}
+      <View style={{ alignItems: 'flex-start', marginBottom: s(8) }}><CareAction label="Refresh schedule and check-ins" onPress={async () => { try { await fetchPlan(); await fetchPlaces(); setPlaceError(''); } catch (error) { setPlaceError(error.message || 'Could not refresh.'); } }} scale={s} /></View>
+      {(plan?.blocks || []).map((block, index) => {
+        const checkin = checkins.find(item => item.block_index === index);
+        return <CareCard key={`${block.start}-${index}`} scale={s}>
+          <CareCardHeader title={block.title || planLabels[block.type] || 'Activity'} subtitle={`${block.minutes} minutes`} icon={block.type === 'medicine' ? 'medical-outline' : 'calendar-outline'} scale={s} />
+          <CareInset scale={s}>
+            <CareMeta title={displayTime(block.start)} detail={block.location_name || 'No place assigned'} scale={s} />
+            {!!checkin && <CareMeta icon="checkmark-circle-outline" title={'Arrived at ' + new Date(checkin.checked_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} scale={s} />}
+          </CareInset>
+          {canEdit && block.type !== 'medicine' && !checkin && places.length > 0 && <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: s(12) }}>
+            {[null, ...places].map(place => <TouchableOpacity key={place?.id || 'none'} disabled={saving} accessibilityRole="button" accessibilityState={{ selected: block.location_id === (place?.id || null) }} onPress={() => assignPlace(index, place)} style={{ backgroundColor: block.location_id === (place?.id || null) ? NAVY : SURFACE, borderRadius: 20, minHeight: s(44), justifyContent: 'center', paddingHorizontal: s(12), marginRight: s(6) }}><Text style={{ fontFamily: 'DMSans_500Medium', color: block.location_id === (place?.id || null) ? WHITE : NAVY, fontSize: s(12) }}>{place?.name || 'No place'}</Text></TouchableOpacity>)}
+          </ScrollView>}
+          {canEdit && <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: s(6) }}><CareAction label="−" accessibilityLabel={'Shorten ' + (block.title || planLabels[block.type] || 'activity') + ' by 15 minutes'} disabled={saving} onPress={() => adjustBlock(index, -15)} scale={s} /><CareAction label="+" accessibilityLabel={'Extend ' + (block.title || planLabels[block.type] || 'activity') + ' by 15 minutes'} disabled={saving} onPress={() => adjustBlock(index, 15)} scale={s} /></View>}
+        </CareCard>;
+      })}
+      {canEdit && <CareCard scale={s}>
+        <CareCardHeader title="Places & NFC stickers" icon="location-outline" scale={s} />
+        <CareBody scale={s}>Add a place, write its sticker, then select that place for an activity above.</CareBody>
+        <TextInput value={placeName} onChangeText={setPlaceName} placeholder="e.g. Game room" accessibilityLabel="Place name" placeholderTextColor={PLACEHOLDER} maxLength={80} style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1, borderColor: BORDER, borderRadius: 8, padding: s(12), backgroundColor: WHITE, color: NAVY, marginBottom: s(10) }} />
         <Button title="Add place" onPress={addPlace} disabled={!placeName.trim() || placeBusy} style={{ marginBottom: s(10) }} />
-        {places.map((place) => <View key={place.id} style={{ paddingVertical: s(8), borderTopWidth: 1, borderColor: '#D8E0F0', flexDirection: 'row', alignItems: 'center' }}><Text style={{ flex: 1, color: NAVY, fontFamily: 'DMSans_500Medium' }}>{place.name}</Text><TouchableOpacity disabled={placeBusy} onPress={() => programSticker(place)} accessibilityRole="button" style={{ padding: s(8) }}><Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold' }}>Write sticker</Text></TouchableOpacity></View>)}
-      </View>}
+        {places.map(place => <View key={place.id} style={{ paddingVertical: s(8), borderTopWidth: 1, borderColor: BORDER, flexDirection: 'row', alignItems: 'center', gap: s(8) }}><Text style={{ flex: 1, color: NAVY, fontFamily: 'DMSans_500Medium' }}>{place.name}</Text><CareAction label="Write sticker" accessibilityLabel={'Write sticker for ' + place.name} disabled={placeBusy} onPress={() => programSticker(place)} scale={s} /></View>)}
+      </CareCard>}
     </>
   );
 }
@@ -700,23 +678,14 @@ function CareNotesTab({ patientId, canEdit }) {
 
   return (
     <>
-      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}>
-        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Care Notes</Text>
-        {canEdit && <TouchableOpacity onPress={() => setAddVisible(true)}>
-          <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>+ Add</Text>
-        </TouchableOpacity>}
-      </View>
-      {notes.length === 0 ? (
-        <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No notes yet</Text>
-      ) : (
-        notes.map((note) => (
-          <TouchableOpacity key={note.id} onLongPress={() => canEdit && handleTogglePin(note)} style={{ backgroundColor: note.pinned ? '#FFF8E1' : '#F5F5F5', padding: s(14), borderRadius: 8, marginBottom: s(8), borderLeftWidth: note.pinned ? 3 : 0, borderLeftColor: NAVY }}>
-            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY }}>{note.pinned ? '📌 ' : ''}{note.title}</Text>
-            <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#333', marginTop: s(4) }}>{note.body}</Text>
-          </TouchableOpacity>
-        ))
-      )}
+      <CareError message={loadError} scale={s} />
+      <CareSectionHeader title="Care Notes" action={canEdit ? '+ Add' : null} onPress={() => setAddVisible(true)} scale={s} />
+      {notes.length === 0 ? <CareEmpty title="No notes yet" icon="document-text-outline" detail="Care instructions and updates will appear here." scale={s} /> : notes.map(note => (
+        <CareCard key={note.id} scale={s}>
+          <CareCardHeader title={note.title} subtitle={note.pinned ? 'Pinned note' : 'Care note'} icon={note.pinned ? 'pin-outline' : 'document-text-outline'} scale={s} action={canEdit && <CareAction label={note.pinned ? 'Unpin' : 'Pin'} accessibilityLabel={(note.pinned ? 'Unpin ' : 'Pin ') + note.title} onPress={() => handleTogglePin(note)} scale={s} />} />
+          <CareInset scale={s}><Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), lineHeight: s(21), color: NAVY }}>{note.body}</Text></CareInset>
+        </CareCard>
+      ))}
       <Modal onRequestClose={() => { if (loading) return; setAddVisible(false); }} visible={addVisible} animationType="slide" transparent>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
@@ -747,27 +716,22 @@ function VitalsTab({ patientId }) {
 
   const loadError = useTabLoader(fetchVitals, patientId);
 
-  const getTypeIcon = (type) => ({ blood_pressure: '❤️', blood_sugar: '🩸', weight: '⚖️', temperature: '🌡️', heart_rate: '💓', oxygen: '💨' }[type] || '📊');
+  const getTypeIcon = (type) => ({ blood_pressure: 'heart-outline', blood_sugar: 'water-outline', weight: 'scale-outline', temperature: 'thermometer-outline', heart_rate: 'pulse-outline', oxygen: 'fitness-outline' }[type] || 'analytics-outline');
   const getTypeLabel = (type) => ({ blood_pressure: 'Blood Pressure', blood_sugar: 'Blood Sugar', weight: 'Weight', temperature: 'Temperature', heart_rate: 'Heart Rate', oxygen: 'Oxygen' }[type] || type);
 
   return (
     <>
-      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
-      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginBottom: s(12) }}>Vitals History</Text>
-      {vitals.length === 0 ? (
-        <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No vitals logged yet</Text>
-      ) : (
-        vitals.map((v) => (
-          <View key={v.id} style={{ flexDirection: 'row', alignItems: 'center', padding: s(10), borderBottomWidth: 1, borderBottomColor: '#EEE' }}>
-            <Text style={{ fontSize: s(18), marginRight: s(8) }}>{getTypeIcon(v.type)}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(13), color: NAVY }}>{getTypeLabel(v.type)}</Text>
-            </View>
-            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>{v.value} {v.unit}</Text>
-            <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(11), color: '#999', marginLeft: s(8) }}>{new Date(v.logged_at).toLocaleDateString()}</Text>
-          </View>
-        ))
-      )}
+      <CareError message={loadError} scale={s} />
+      <CareSectionHeader title="Vitals History" scale={s} />
+      {vitals.length === 0 ? <CareEmpty title="No vitals logged yet" icon="pulse-outline" detail="The patient's recorded readings will appear here." scale={s} /> : vitals.map(v => (
+        <CareCard key={v.id} scale={s}>
+          <CareCardHeader title={getTypeLabel(v.type)} icon={getTypeIcon(v.type)} scale={s} />
+          <CareInset scale={s}>
+            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(24), color: NAVY }}>{v.value} <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: MUTED }}>{v.unit}</Text></Text>
+            <CareMeta title={new Date(v.logged_at).toLocaleDateString()} detail={new Date(v.logged_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} scale={s} />
+          </CareInset>
+        </CareCard>
+      ))}
     </>
   );
 }
@@ -790,24 +754,15 @@ function AppointmentsTab({ patientId, navigation, canEdit }) {
 
   return (
     <>
-      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Upcoming Appointments</Text><TouchableOpacity onPress={() => navigation.navigate('Appointments', { patientId, isPatient: !canEdit })}><Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold' }}>{canEdit ? '+ Add' : 'View all'}</Text></TouchableOpacity></View>
-      {upcoming.length === 0 ? (
-        <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No upcoming appointments</Text>
-      ) : (
-        upcoming.map((appt) => {
-          const dt = new Date(appt.appointment_time);
-          return (
-            <View key={appt.id} style={{ backgroundColor: SURFACE, padding: s(12), borderRadius: 6, marginBottom: s(8) }}>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>{appt.title}</Text>
-              {!!appt.doctor && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#333' }}>Dr. {appt.doctor}</Text>}
-              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#999', marginTop: s(4) }}>
-                {dt.toLocaleDateString()} at {dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </Text>
-            </View>
-          );
-        })
-      )}
+      <CareError message={loadError} scale={s} />
+      <CareSectionHeader title="Upcoming Appointments" action={canEdit ? '+ Add' : 'View all'} onPress={() => navigation.navigate('Appointments', { patientId, isPatient: !canEdit })} scale={s} />
+      {upcoming.length === 0 ? <CareEmpty title="No upcoming appointments" icon="calendar-outline" detail="Scheduled visits will appear here." scale={s} /> : upcoming.map(appt => {
+        const dt = new Date(appt.appointment_time);
+        return <CareCard key={appt.id} scale={s}>
+          <CareCardHeader title={appt.title} subtitle={appt.doctor ? 'Dr. ' + appt.doctor : null} icon="calendar-outline" scale={s} />
+          <CareInset scale={s}><CareMeta title={dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} detail={dt.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })} scale={s} /></CareInset>
+        </CareCard>;
+      })}
     </>
   );
 }
@@ -829,22 +784,15 @@ function MoodTab({ patientId }) {
 
   return (
     <>
-      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
-      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginBottom: s(12) }}>Mood History</Text>
-      {moods.length === 0 ? (
-        <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No mood entries yet</Text>
-      ) : (
-        moods.map((m) => (
-          <View key={m.id} style={{ flexDirection: 'row', alignItems: 'center', padding: s(10), borderBottomWidth: 1, borderBottomColor: '#EEE' }}>
-            <Text style={{ fontSize: s(24), marginRight: s(12) }}>{getEmoji(m.mood)}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}>{MOODS.find(item => item.value === m.mood)?.label || 'Unknown'}</Text>
-              {!!m.note && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{m.note}</Text>}
-            </View>
-            <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(11), color: '#999' }}>{new Date(m.logged_at).toLocaleDateString()}</Text>
-          </View>
-        ))
-      )}
+      <CareError message={loadError} scale={s} />
+      <CareSectionHeader title="Mood History" scale={s} />
+      {moods.length === 0 ? <CareEmpty title="No mood entries yet" icon="happy-outline" detail="The patient's mood check-ins will appear here." scale={s} /> : moods.map(m => (
+        <CareCard key={m.id} scale={s}>
+          <CareCardHeader title={MOODS.find(item => item.value === m.mood)?.label || 'Unknown'} subtitle="Mood check-in" symbol={getEmoji(m.mood)} scale={s} />
+          {!!m.note && <CareBody scale={s}>{m.note}</CareBody>}
+          <CareInset scale={s}><CareMeta title={new Date(m.logged_at).toLocaleDateString()} detail={new Date(m.logged_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} scale={s} /></CareInset>
+        </CareCard>
+      ))}
     </>
   );
 }
@@ -877,34 +825,30 @@ function ReportTab({ patientId }) {
 
   const loadError = useTabLoader(fetchReport, patientId);
 
-  if (!report && loadError) return <Text style={{ color: '#C0392B' }}>{loadError}</Text>;
-  if (!report) return <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>Loading...</Text>;
+  if (!report) return <><CareSectionHeader title="Weekly Report" scale={s} />{loadError ? <CareError message={loadError} scale={s} /> : <CareEmpty title="Loading report…" icon="bar-chart-outline" scale={s} />}</>;
 
   const medRate = report.totalMedSlots > 0 ? Math.round((report.medTaken / report.totalMedSlots) * 100) : 0;
   const taskRate = report.totalTaskSlots > 0 ? Math.round((report.taskDone / report.totalTaskSlots) * 100) : 0;
 
   return (
     <>
-      {!!loadError && <Text style={{ color: '#C0392B', marginBottom: s(10) }}>{loadError}</Text>}
-      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY, marginBottom: s(12) }}>Weekly Report</Text>
-
-      <View style={{ backgroundColor: SURFACE, borderRadius: 6, padding: s(14), marginBottom: s(10) }}>
-        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginBottom: s(6) }}>Medications</Text>
-        <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#333' }}>Taken: {report.medTaken} | Missed: {report.medMissed}</Text>
-        <View style={{ height: 8, backgroundColor: '#E0E0E0', borderRadius: 4, marginTop: s(6), overflow: 'hidden' }}>
-          <View style={{ height: '100%', width: `${medRate}%`, backgroundColor: medRate >= 80 ? NAVY : medRate >= 50 ? '#FF9800' : '#F44336', borderRadius: 4 }} />
-        </View>
-        <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(12), color: NAVY, marginTop: s(4) }}>{medRate}% completion</Text>
-      </View>
-
-      <View style={{ backgroundColor: SURFACE, borderRadius: 6, padding: s(14) }}>
-        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(15), color: NAVY, marginBottom: s(6) }}>Tasks</Text>
-        <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(13), color: '#333' }}>Done: {report.taskDone} | Missed: {report.taskMissed}</Text>
-        <View style={{ height: 8, backgroundColor: '#E0E0E0', borderRadius: 4, marginTop: s(6), overflow: 'hidden' }}>
-          <View style={{ height: '100%', width: `${taskRate}%`, backgroundColor: taskRate >= 80 ? NAVY : taskRate >= 50 ? '#FF9800' : '#F44336', borderRadius: 4 }} />
-        </View>
-        <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(12), color: NAVY, marginTop: s(4) }}>{taskRate}% completion</Text>
-      </View>
+      <CareError message={loadError} scale={s} />
+      <CareSectionHeader title="Weekly Report" scale={s} />
+      <CareBody scale={s}>Completion over the last seven days</CareBody>
+      {[
+        { title: 'Medications', icon: 'medical-outline', doneLabel: 'Taken', done: report.medTaken, missed: report.medMissed, rate: medRate },
+        { title: 'Tasks', icon: 'checkbox-outline', doneLabel: 'Done', done: report.taskDone, missed: report.taskMissed, rate: taskRate },
+      ].map(item => <CareCard key={item.title} scale={s}>
+        <CareCardHeader title={item.title} subtitle="Weekly completion" icon={item.icon} scale={s} />
+        <CareInset scale={s}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: s(20) }}>
+            <View style={{ flex: 1 }}><Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: MUTED }}>{item.doneLabel}</Text><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(24), color: NAVY }}>{item.done}</Text></View>
+            <View style={{ flex: 1 }}><Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: MUTED }}>Missed</Text><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(24), color: NAVY }}>{item.missed}</Text></View>
+          </View>
+          <View accessibilityRole="progressbar" accessibilityLabel={item.title + ' completion'} accessibilityValue={{ min: 0, max: 100, now: item.rate }} style={{ height: s(8), backgroundColor: BORDER, borderRadius: 4, marginTop: s(6), overflow: 'hidden' }}><View style={{ height: '100%', width: `${item.rate}%`, backgroundColor: item.rate >= 80 ? NAVY : item.rate >= 50 ? WARNING : DANGER, borderRadius: 4 }} /></View>
+          <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(12), color: NAVY, marginTop: s(4) }}>{item.rate}% completion</Text>
+        </CareInset>
+      </CareCard>)}
     </>
   );
 }
