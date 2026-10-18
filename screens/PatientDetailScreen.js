@@ -547,10 +547,10 @@ function DailyScheduleTab({ patientId, canEdit }) {
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const editSaving = React.useRef(false);
 
-  const openBlockEditor = (block, index) => {
-    if (!canEdit || saving || !plan) return;
-    setEditingBlock({ index, planId: plan.id, date: plan.plan_date, original: JSON.stringify(block) });
-    setBlockTitle(block.title || planLabels[block.type] || 'Activity');
+  const openBlockEditor = (block = { minutes: 30 }, index = null) => {
+    if (!canEdit || saving || (index !== null && !plan)) return;
+    setEditingBlock({ index, planId: plan?.id, date: plan?.plan_date || localDateKey(new Date()), original: JSON.stringify(block) });
+    setBlockTitle(index === null ? '' : block.title || planLabels[block.type] || 'Activity');
     setBlockTime(String(block.start || '').slice(0, 5));
     setBlockMinutes(String(block.minutes ?? 0));
     setEditError('');
@@ -567,6 +567,7 @@ function DailyScheduleTab({ patientId, canEdit }) {
   const saveBlock = async (remove = false) => {
     if (!canEdit || !editingBlock || editSaving.current || saving) return;
     const removing = remove === true;
+    const adding = editingBlock.index === null;
     const title = blockTitle.trim();
     const minutes = Number(blockMinutes.trim());
     if (!removing && !title) { setEditError('Enter an activity name.'); return; }
@@ -579,12 +580,15 @@ function DailyScheduleTab({ patientId, canEdit }) {
       if (editingBlock.date !== localDateKey(new Date())) throw new Error('This schedule is from a previous day. Close the editor and refresh the schedule.');
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) throw new Error('Please sign in again before editing the schedule.');
-      const { data: latest, error: readError } = await supabase.from('daily_plans').select('*').eq('id', editingBlock.planId).eq('patient_id', patientId).eq('plan_date', editingBlock.date).single();
+      const { data: latest, error: readError } = await supabase.from('daily_plans').select('*').eq('patient_id', patientId).eq('plan_date', editingBlock.date).maybeSingle();
       if (readError) throw readError;
-      if (!latest || JSON.stringify(latest.blocks?.[editingBlock.index]) !== editingBlock.original) throw new Error('This activity changed while you were editing. Close the editor, refresh, and try again.');
-      const blocks = removing ? removePlanActivity(latest.blocks, editingBlock.index) : latest.blocks.map((block, index) => index === editingBlock.index ? { ...block, title, start: blockTime, minutes } : block);
-      let request = supabase.from('daily_plans').update({ blocks, overridden_by: user.id, updated_at: new Date().toISOString() }).eq('id', latest.id).eq('patient_id', patientId).eq('plan_date', editingBlock.date);
-      if (latest.updated_at) request = request.eq('updated_at', latest.updated_at);
+      if (!adding && (!latest || latest.id !== editingBlock.planId || JSON.stringify(latest.blocks?.[editingBlock.index]) !== editingBlock.original)) throw new Error('This activity changed while you were editing. Close the editor, refresh, and try again.');
+      const blocks = adding ? [...(latest?.blocks || []), { type: 'activity', title, start: blockTime, minutes }] : removing ? removePlanActivity(latest.blocks, editingBlock.index) : latest.blocks.map((block, index) => index === editingBlock.index ? { ...block, title, start: blockTime, minutes } : block);
+      const values = { blocks, overridden_by: user.id, updated_at: new Date().toISOString() };
+      let request = latest
+        ? supabase.from('daily_plans').update(values).eq('id', latest.id).eq('patient_id', patientId).eq('plan_date', editingBlock.date)
+        : supabase.from('daily_plans').insert({ patient_id: patientId, plan_date: editingBlock.date, ...values });
+      if (latest?.updated_at) request = request.eq('updated_at', latest.updated_at);
       const { data, error } = await request.select().single();
       if (error) throw error;
       if (!data) throw new Error('The schedule changed or could not be saved. Refresh and try again.');
@@ -697,8 +701,8 @@ function DailyScheduleTab({ patientId, canEdit }) {
   return (
     <>
       <CareError message={loadError || placeError} scale={s} />
-      <CareSectionHeader title="Today's schedule" scale={s} />
-      {!plan ? <CareEmpty title="No schedule yet" icon="calendar-outline" detail="The patient can build today's plan from their morning check-in." scale={s} /> : <CareBody scale={s}>{plan.overridden_by ? 'Adjusted by caregiver' : 'Built from the morning check-in'}</CareBody>}
+      <CareSectionHeader title="Today's schedule" action={canEdit ? '+ Add' : null} onPress={() => openBlockEditor()} scale={s} />
+      {!plan ? <CareEmpty title="No schedule yet" icon="calendar-outline" detail={canEdit ? 'Add an activity, or let the patient build a plan from their morning check-in.' : "The patient can build today's plan from their morning check-in."} scale={s} /> : <CareBody scale={s}>{plan.overridden_by ? 'Adjusted by caregiver' : 'Built from the morning check-in'}</CareBody>}
       <View style={{ alignItems: 'flex-start', marginBottom: s(8) }}><CareAction label="Refresh schedule and check-ins" onPress={async () => { try { await fetchPlan(); await fetchPlaces(); setPlaceError(''); } catch (error) { setPlaceError(error.message || 'Could not refresh.'); } }} scale={s} /></View>
       {!!plan && activePlanEntries(plan.blocks || []).length === 0 && <CareEmpty title="No activities scheduled" icon="calendar-outline" detail="There are no activities left on today's schedule." scale={s} />}
       {activePlanEntries(plan?.blocks || []).map(({ block, index }) => {
@@ -726,7 +730,7 @@ function DailyScheduleTab({ patientId, canEdit }) {
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: s(16), backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <ScrollView keyboardShouldPersistTaps="handled" style={{ flexGrow: 0, maxHeight: '90%', width: '100%', maxWidth: 480, backgroundColor: WHITE, borderRadius: 12 }} contentContainerStyle={{ padding: s(20) }}>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(8) }}>Edit schedule activity</Text>
+              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(8) }}>{editingBlock?.index === null ? 'Add schedule activity' : 'Edit schedule activity'}</Text>
               <CareBody scale={s}>Changes apply to today's schedule only. Other activities keep their times.</CareBody>
               {plan?.blocks?.[editingBlock?.index]?.type === 'medicine' && <CareBody scale={s}>This changes the schedule activity only. Medication dose times and reminders stay the same.</CareBody>}
               <CareError message={editError} scale={s} />
@@ -741,9 +745,9 @@ function DailyScheduleTab({ patientId, canEdit }) {
                 <Button title="Delete activity" onPress={() => saveBlock(true)} disabled={saving} loading={saving} style={{ backgroundColor: DANGER, marginBottom: s(8) }} />
                 <Button title="Keep activity" onPress={() => setConfirmingRemoval(false)} disabled={saving} style={{ backgroundColor: MUTED }} />
               </CareInset> : <>
-                <Button title="Save changes" onPress={saveBlock} loading={saving} disabled={saving || !blockTitle.trim() || !blockTime || !blockMinutes.trim()} style={{ marginBottom: s(8) }} />
+                <Button title={editingBlock?.index === null ? 'Add activity' : 'Save changes'} onPress={saveBlock} loading={saving} disabled={saving || !blockTitle.trim() || !blockTime || !blockMinutes.trim()} style={{ marginBottom: s(8) }} />
                 <Button title="Cancel" onPress={closeBlockEditor} disabled={saving} style={{ backgroundColor: MUTED }} />
-                <Button title="Delete activity" onPress={confirmRemoveBlock} disabled={saving} style={{ backgroundColor: WHITE, borderWidth: 1, borderColor: DANGER, marginTop: s(16) }} textStyle={{ color: DANGER }} />
+                {editingBlock?.index !== null && <Button title="Delete activity" onPress={confirmRemoveBlock} disabled={saving} style={{ backgroundColor: WHITE, borderWidth: 1, borderColor: DANGER, marginTop: s(16) }} textStyle={{ color: DANGER }} />}
               </>}
             </ScrollView>
           </View>
