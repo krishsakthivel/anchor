@@ -53,6 +53,9 @@ export default function PatientDetailScreen({ route, navigation }) {
     return () => { if (tabRefresh.current === loader) tabRefresh.current = null; };
   }, []);
   const [addMedVisible, setAddMedVisible] = useState(false);
+  const [editingMedication, setEditingMedication] = useState(null);
+  const [editingSchedule, setEditingSchedule] = useState(null);
+  const [medError, setMedError] = useState('');
   const [addTaskVisible, setAddTaskVisible] = useState(false);
   const [medName, setMedName] = useState('');
   const [medDosage, setMedDosage] = useState('');
@@ -137,71 +140,82 @@ export default function PatientDetailScreen({ route, navigation }) {
   };
 
 
+  const selectMedicationSchedule = (schedule) => {
+    setEditingSchedule(schedule);
+    setMedTime(schedule?.time ? String(schedule.time).slice(0, 5) : '');
+    setMedDays(schedule ? MEDICATION_DAYS.filter(day => normalizeDays(schedule.days).includes(day)) : [...MEDICATION_DAYS]);
+  };
+
+  const openMedication = (med = null) => {
+    if (!canEdit || loading || loggingId) return;
+    setEditingMedication(med);
+    setMedName(med?.name || '');
+    setMedDosage(med?.dosage || '');
+    setMedInstructions(med?.instructions || '');
+    setMedTotalPills(med?.total_pills == null ? '' : String(med.total_pills));
+    setMedPillsRemaining(med?.pills_remaining == null ? '' : String(med.pills_remaining));
+    selectMedicationSchedule(med ? schedules.find(schedule => schedule.medication_id === med.id) : null);
+    setMedError('');
+    setAddMedVisible(true);
+  };
+
   const handleAddMedication = async () => {
     if (!medName.trim() || loading || !canEdit) return;
     const scheduleValidation = medicationScheduleError(medDays, medTime);
-    if (scheduleValidation) { Alert.alert('Check medication schedule', scheduleValidation); return; }
+    if (scheduleValidation) { setMedError(scheduleValidation); return; }
+    if (editingSchedule && !medTime.trim()) { setMedError('Choose a time for this dose.'); return; }
     const totalPills = medTotalPills.trim() === '' ? null : Number(medTotalPills);
     const pillsRemaining = medPillsRemaining.trim() === '' ? null : Number(medPillsRemaining);
     if ((totalPills !== null && (!Number.isInteger(totalPills) || totalPills < 0))
       || (pillsRemaining !== null && (!Number.isInteger(pillsRemaining) || pillsRemaining < 0))
       || (totalPills !== null && pillsRemaining !== null && pillsRemaining > totalPills)) {
-      Alert.alert('Invalid pill count', 'Use whole, non-negative numbers. Remaining pills cannot be more than the total.');
+      setMedError('Use whole, non-negative pill counts. Remaining pills cannot exceed the total.');
       return;
     }
     setLoading(true);
+    setMedError('');
     try {
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       setLoading(false);
-      Alert.alert('Session expired', 'Please sign in again before adding medication.');
+      setMedError('Your session has expired. Please sign in again.');
       return;
     }
 
     const enteredTime = medTime.trim();
     if (enteredTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(enteredTime)) {
       setLoading(false);
-      Alert.alert('Invalid time', 'Use 24-hour HH:MM format, for example 08:30.');
+      setMedError('Choose a valid medicine time.');
       return;
     }
 
-    const { data: med, error } = await supabase
-      .from('medications')
-      .insert({
-        patient_id: patientId,
-        name: medName.trim(),
-        dosage: medDosage.trim() || null,
-        instructions: medInstructions.trim() || null,
-        total_pills: totalPills,
-        pills_remaining: pillsRemaining,
-        created_by: user.id,
-      })
-      .select()
-      .single();
+    const values = { name: medName.trim(), dosage: medDosage.trim() || null, instructions: medInstructions.trim() || null };
+    if (!editingMedication || totalPills !== editingMedication.total_pills) values.total_pills = totalPills;
+    if (!editingMedication || pillsRemaining !== editingMedication.pills_remaining) values.pills_remaining = pillsRemaining;
+    const { data: med, error } = editingMedication
+      ? await supabase.from('medications').update(values).eq('id', editingMedication.id).eq('patient_id', patientId).select().single()
+      : await supabase.from('medications').insert({ patient_id: patientId, created_by: user.id, ...values }).select().single();
 
     if (error) {
       setLoading(false);
-      Alert.alert('Could not add medication', error.message || 'Please try again.');
+      setMedError(error.message || 'Could not save medication. Please try again.');
       return;
     }
 
     if (enteredTime) {
-      const { error: scheduleError } = await supabase
-        .from('medication_schedule')
-        .insert({
-          medication_id: med.id,
-          patient_id: patientId,
-          time: enteredTime,
-          frequency: medDays.length === 7 ? 'daily' : 'weekly',
-          days: MEDICATION_DAYS.filter(day => medDays.includes(day)),
-        });
+      const scheduleValues = { time: enteredTime, frequency: medDays.length === 7 ? 'daily' : 'weekly', days: MEDICATION_DAYS.filter(day => medDays.includes(day)) };
+      const { error: scheduleError } = editingSchedule
+        ? await supabase.from('medication_schedule').update(scheduleValues).eq('id', editingSchedule.id).eq('medication_id', med.id).eq('patient_id', patientId).select('id').single()
+        : await supabase.from('medication_schedule').insert({ medication_id: med.id, patient_id: patientId, ...scheduleValues });
 
       if (scheduleError) {
+        if (!editingMedication) {
           const { error: rollbackError } = await supabase.from('medications').delete().eq('id', med.id);
           if (rollbackError) console.error('medication rollback failed', rollbackError);
+        }
         setLoading(false);
-        Alert.alert('Could not add medication', scheduleError.message || 'The medicine schedule could not be created.');
+        setMedError((editingMedication ? 'Medication details saved, but the schedule failed. Retry saving: ' : '') + (scheduleError.message || 'The medicine schedule could not be saved.'));
         return;
       }
     }
@@ -217,7 +231,7 @@ export default function PatientDetailScreen({ route, navigation }) {
     setMedPillsRemaining('');
     fetchData();
     } catch (error) {
-      Alert.alert('Could not save', error.message || 'Please try again.');
+      setMedError(error.message || 'Could not save. Please try again.');
     } finally { setLoading(false); }
   };
 
@@ -344,14 +358,15 @@ export default function PatientDetailScreen({ route, navigation }) {
         return (
           <>
             <CareError message={actionError} scale={s} />
-            <CareSectionHeader title="Medications" action={canEdit ? '+ Add' : null} onPress={() => setAddMedVisible(true)} scale={s} />
+            <CareSectionHeader title="Medications" action={canEdit ? '+ Add' : null} onPress={() => openMedication()} scale={s} />
             {medications.length === 0 ? (
               <CareEmpty title="No medications added yet" icon="medical-outline" detail="Medications and their schedules will appear here." scale={s} />
             ) : (
               medications.map(med => <MedicationCard key={med.id}
                 medication={med}
                 schedules={schedules.filter(schedule => schedule.medication_id === med.id)}
-                logs={medLogs} canEdit={canEdit} busy={!!loggingId} scale={s}
+                logs={medLogs} canEdit={canEdit} busy={!!loggingId || loading} scale={s}
+                onEdit={() => openMedication(med)}
                 onRecord={(schedule, status) => logMedicine(med, schedule, status)}
                 onUpdatePills={() => handleUpdatePills(med)}
                 onDelete={() => handleDeleteMed(med.id)} />)
@@ -440,7 +455,9 @@ export default function PatientDetailScreen({ route, navigation }) {
               <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
                 <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: s(24) }} style={{ backgroundColor: WHITE, borderRadius: 12, width: '90%', maxWidth: 480, maxHeight: '85%' }}>
-                  <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Medication</Text>
+                  <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>{editingMedication ? 'Edit Medication' : 'Add Medication'}</Text>
+                  <CareError message={medError} scale={s} />
+                  {editingMedication && schedules.filter(schedule => schedule.medication_id === editingMedication.id).length > 1 && <View style={{ marginBottom: s(12) }}><CareBody scale={s}>Choose the dose time to edit. Other dose times stay unchanged.</CareBody><View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{schedules.filter(schedule => schedule.medication_id === editingMedication.id).map(schedule => <TouchableOpacity key={schedule.id} onPress={() => selectMedicationSchedule(schedule)} disabled={loading} accessibilityRole="button" accessibilityState={{ selected: editingSchedule?.id === schedule.id }} style={{ padding: s(10), marginRight: s(6), marginBottom: s(6), borderRadius: 8, backgroundColor: editingSchedule?.id === schedule.id ? NAVY : SURFACE }}><Text style={{ color: editingSchedule?.id === schedule.id ? WHITE : NAVY }}>{displayTime(String(schedule.time).slice(0, 5))}</Text></TouchableOpacity>)}</View></View>}
 
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Name *</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="e.g. Aspirin" placeholderTextColor={PLACEHOLDER} value={medName} onChangeText={setMedName} />
@@ -449,7 +466,7 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="e.g. 100mg" placeholderTextColor={PLACEHOLDER} value={medDosage} onChangeText={setMedDosage} />
 
                   <WeekdaySelector value={medDays} onChange={setMedDays} disabled={loading} />
-                  <TimePickerInput label={medDays.length === 7 ? 'Medicine time (optional)' : 'Medicine time *'} value={medTime} onChange={setMedTime} optional={medDays.length === 7} />
+                  <TimePickerInput label={!editingSchedule && medDays.length === 7 ? 'Medicine time (optional)' : 'Medicine time *'} value={medTime} onChange={setMedTime} optional={!editingSchedule && medDays.length === 7} />
                   {medDays.length > 0 && medDays.length < 7 && !medTime && <Text style={{ color: NAVY, fontFamily: 'DMSans_400Regular', fontSize: s(12), marginBottom: s(12) }}>Choose a time for the selected days.</Text>}
 
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Instructions</Text>
@@ -461,7 +478,7 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Pills Remaining</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(16) }} placeholder="e.g. 25" placeholderTextColor={PLACEHOLDER} value={medPillsRemaining} onChangeText={setMedPillsRemaining} keyboardType="numeric" />
 
-                  <Button title={loading ? 'Adding' : 'Add Medication'} onPress={handleAddMedication} disabled={!medName.trim() || loading || !!medicationScheduleError(medDays, medTime)} loading={loading} style={{ marginBottom: s(8) }} />
+                  <Button title={editingMedication ? 'Save changes' : 'Add Medication'} onPress={handleAddMedication} disabled={!medName.trim() || loading || !!medicationScheduleError(medDays, medTime) || (!!editingSchedule && !medTime)} loading={loading} style={{ marginBottom: s(8) }} />
                   <Button title="Cancel" disabled={loading} onPress={() => { setAddMedVisible(false); setMedName(''); setMedDosage(''); setMedTime(''); setMedDays([...MEDICATION_DAYS]); setMedInstructions(''); setMedTotalPills(''); setMedPillsRemaining(''); }} style={{ backgroundColor: '#999' }} />
                 </ScrollView>
                 </View>

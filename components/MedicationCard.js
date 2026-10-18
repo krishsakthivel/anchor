@@ -14,12 +14,13 @@ const statuses = {
   missed: { label: 'Missed', icon: 'alert-circle', color: DANGER, background: DANGER_BG },
 };
 
-export default function MedicationCard({ medication, schedules, logs, canEdit, busy, onRecord, onUpdatePills, onDelete, scale = value => value }) {
+export default function MedicationCard({ medication, schedules, logs, canEdit, busy, onRecord, onUpdatePills, onEdit, onDelete, scale = value => value }) {
   const s = scale;
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
   const slots = schedules.length ? schedules : [null];
   const lowStock = medication.pills_remaining != null && medication.pills_remaining <= (medication.refill_alert_at ?? 10);
   const options = () => Alert.alert(medication.name, 'Medication options', [
+    { text: 'Edit medication', onPress: onEdit },
     ...(medication.total_pills != null ? [{ text: 'Update pill count', onPress: onUpdatePills }] : []),
     { text: 'Delete medication', style: 'destructive', onPress: onDelete },
     { text: 'Cancel', style: 'cancel' },

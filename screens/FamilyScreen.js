@@ -45,7 +45,7 @@ export default function FamilyScreen({ navigation }) {
     <ScrollView style={{ flex: 1, backgroundColor: WHITE }}
       contentContainerStyle={{ padding: 24, width: '100%', maxWidth: 600, alignSelf: 'center' }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} />}>
-      <Button title="Back" onPress={() => navigation.goBack()} style={{ alignSelf: 'flex-start', marginBottom: 20 }} />
+      <Button title="← Back" onPress={() => navigation.goBack()} style={{ alignSelf: 'flex-start', paddingHorizontal: 16, marginBottom: 20 }} />
       <Text style={{ color: NAVY, fontFamily: 'DMSans_700Bold', fontSize: 26, marginBottom: 12 }}>Family updates</Text>
       <Text style={{ color: MUTED, marginBottom: 16 }}>Enter the eight-digit family code from the caregiver. Family access shows medication status and care updates only.</Text>
       <TextInput accessibilityLabel="Family code" placeholder="8 digit family code" value={code} inputMode="numeric" keyboardType="number-pad"
