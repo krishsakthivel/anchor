@@ -7,11 +7,8 @@ const queue = [];
 const listeners = new Set();
 const notify = () => listeners.forEach(listener => listener(queue[0] || null));
 
-// Use the same interface everywhere: web supports it and Android is not limited
-// to three choices. No browser globals or native Alert callbacks are needed.
 export const appAlert = {
   alert(title, message = '', buttons = [{ text: 'OK' }]) {
-    // Native system alerts can safely appear over an already-open form modal.
     if (Platform.OS !== 'web' && buttons.length <= 3) {
       NativeAlert.alert(title, message, buttons.map(button => ({ ...button,
         onPress: button.onPress ? async () => {
@@ -35,7 +32,6 @@ export function AppDialogHost() {
   }, []);
 
   const choose = async (button) => {
-    // Ignore a second tap from a dialog that has already been dismissed.
     if (!dialog || queue[0] !== dialog) return;
     queue.shift();
     notify();

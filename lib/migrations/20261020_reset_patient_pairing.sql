@@ -1,5 +1,3 @@
--- Install the pairing-reset RPC for existing projects, including older builds
--- that use the plural function name. Only the care-plan creator may reset it.
 BEGIN;
 ALTER TABLE public.pairing_codes ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 ALTER TABLE public.pairing_codes ALTER COLUMN expires_at SET DEFAULT (NOW() + INTERVAL '24 hours');

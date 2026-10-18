@@ -8,7 +8,6 @@ CREATE POLICY "Caregivers manage own push tokens" ON caregiver_push_tokens FOR A
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid() AND current_profile_role() = 'caregiver');
 
--- An outbox entry is a delivery attempt, not a guarantee that a person saw it.
 CREATE TABLE IF NOT EXISTS safety_notification_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   checkin_id UUID NOT NULL REFERENCES safety_checkins(id) ON DELETE CASCADE,
@@ -22,7 +21,6 @@ CREATE TABLE IF NOT EXISTS safety_notification_jobs (
   UNIQUE (checkin_id, expo_push_token)
 );
 ALTER TABLE safety_notification_jobs ENABLE ROW LEVEL SECURITY;
--- No client policies: only the server worker may inspect tokens or delivery jobs.
 CREATE INDEX safety_notification_jobs_pending_idx ON safety_notification_jobs(state, available_at);
 
 CREATE OR REPLACE FUNCTION enqueue_safety_notifications()
@@ -60,7 +58,6 @@ $$;
 REVOKE ALL ON FUNCTION claim_safety_notification_jobs(UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION claim_safety_notification_jobs(UUID) TO service_role;
 
--- Allow the authorized caregiver's open app to refresh when a check-in arrives.
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime')
      AND NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime'

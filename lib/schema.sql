@@ -929,9 +929,6 @@ END;
 $$;
 
 
--- UI fixes and family support
--- Apply once after the existing dated migrations. Existing vital readings are
--- preserved; the NOT VALID constraint validates new inserts/updates only.
 CREATE OR REPLACE FUNCTION valid_vital_reading(p_type TEXT, p_value TEXT)
 RETURNS BOOLEAN LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 DECLARE reading TEXT := btrim(p_value); parts TEXT[];
@@ -950,7 +947,6 @@ ALTER TABLE vital_signs DROP CONSTRAINT IF EXISTS vital_signs_valid_reading;
 ALTER TABLE vital_signs ADD CONSTRAINT vital_signs_valid_reading
   CHECK (valid_vital_reading(type, value)) NOT VALID;
 
--- Include family support for projects originally created from schema.sql too.
 CREATE TABLE IF NOT EXISTS family_codes (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
@@ -982,7 +978,6 @@ BEGIN
   IF auth.uid() IS NULL OR current_profile_role() IS DISTINCT FROM 'caregiver' THEN
     RAISE EXCEPTION 'Please sign in before joining a family';
   END IF;
-  -- Serialize attempts per user so concurrent requests cannot bypass the limit.
   PERFORM pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 0));
   IF (SELECT count(*) FROM family_claim_attempts WHERE user_id = auth.uid()
       AND attempted_at > NOW() - INTERVAL '15 minutes') >= 20 THEN RETURN NULL; END IF;
@@ -1004,7 +999,6 @@ REVOKE ALL ON FUNCTION claim_family_code(TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION claim_family_code(TEXT) TO authenticated;
 
 
--- Help notification outbox
 CREATE TABLE IF NOT EXISTS caregiver_push_tokens (
   expo_push_token TEXT PRIMARY KEY CHECK (expo_push_token ~ '^(ExponentPushToken|ExpoPushToken)\[[^]]+\]$'),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -1015,7 +1009,6 @@ CREATE POLICY "Caregivers manage own push tokens" ON caregiver_push_tokens FOR A
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid() AND current_profile_role() = 'caregiver');
 
--- An outbox entry is a delivery attempt, not a guarantee that a person saw it.
 CREATE TABLE IF NOT EXISTS safety_notification_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   checkin_id UUID NOT NULL REFERENCES safety_checkins(id) ON DELETE CASCADE,
@@ -1029,7 +1022,6 @@ CREATE TABLE IF NOT EXISTS safety_notification_jobs (
   UNIQUE (checkin_id, expo_push_token)
 );
 ALTER TABLE safety_notification_jobs ENABLE ROW LEVEL SECURITY;
--- No client policies: only the server worker may inspect tokens or delivery jobs.
 CREATE INDEX safety_notification_jobs_pending_idx ON safety_notification_jobs(state, available_at);
 
 CREATE OR REPLACE FUNCTION enqueue_safety_notifications()
@@ -1067,7 +1059,6 @@ $$;
 REVOKE ALL ON FUNCTION claim_safety_notification_jobs(UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION claim_safety_notification_jobs(UUID) TO service_role;
 
--- Allow the authorized caregiver's open app to refresh when a check-in arrives.
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime')
      AND NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime'
@@ -1076,9 +1067,6 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- Medication recording permission repair
--- Repair medication recording without granting viewer/family editing access.
--- Run in the Supabase SQL Editor for the same project used by Anchor.
 BEGIN;
 
 ALTER TABLE public.medication_log ENABLE ROW LEVEL SECURITY;
@@ -1115,7 +1103,6 @@ CREATE POLICY "Patients log own medications"
     ))
   );
 
--- The patient flow requests the inserted row back; it needs a SELECT policy too.
 DROP POLICY IF EXISTS "Caregivers read patient medication logs" ON public.medication_log;
 CREATE POLICY "Caregivers read patient medication logs"
   ON public.medication_log FOR SELECT TO authenticated
@@ -1131,10 +1118,8 @@ COMMIT;
 
 
 
--- Remaining audit fixes
 BEGIN;
 
--- Do not backfill old schedules with today's date: that would rewrite history.
 ALTER TABLE public.medication_schedule ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
 UPDATE public.medication_schedule s SET created_at = m.created_at
   FROM public.medications m WHERE s.medication_id = m.id AND s.created_at IS NULL;
@@ -1169,9 +1154,6 @@ GRANT EXECUTE ON FUNCTION public.family_status() TO authenticated;
 
 COMMIT;
 
--- Complete-codebase review
--- Complete-codebase review: restore shared viewer reads and serialize pairing.
--- Existing editor write policies and restricted family access are preserved.
 BEGIN;
 DROP POLICY IF EXISTS "Caregivers read accessible medications" ON public.medications;
 CREATE POLICY "Caregivers read accessible medications" ON public.medications
@@ -1234,8 +1216,6 @@ BEGIN
     RAISE EXCEPTION 'Only a patient session can claim a pairing code';
   END IF;
 
-  -- Serialize claims and rate-limit checks for this session, including claims
-  -- for different codes. Locking a code alone does not prevent double pairing.
   PERFORM pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 1));
   IF EXISTS (SELECT 1 FROM patients WHERE paired_user_id = auth.uid()) THEN
     RAISE EXCEPTION 'This patient session is already paired';
@@ -1314,11 +1294,6 @@ REVOKE ALL ON FUNCTION public.claim_patient_code(TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.claim_patient_code(TEXT) TO authenticated;
 COMMIT;
 
--- Explicit medication access for care-plan creators
--- Explicitly recognize the care-plan creator, including on projects with an
--- older access helper or without an owner row in caregiver_patient.
--- Viewer/family users still cannot record medication outcomes.
--- Run in the Supabase SQL Editor for the same project used by Anchor.
 BEGIN;
 
 ALTER TABLE public.medication_log ENABLE ROW LEVEL SECURITY;
@@ -1359,7 +1334,6 @@ CREATE POLICY "Patients log own medications"
     ))
   );
 
--- The patient flow requests the inserted row back; it needs a SELECT policy too.
 DROP POLICY IF EXISTS "Caregivers read patient medication logs" ON public.medication_log;
 CREATE POLICY "Caregivers read patient medication logs"
   ON public.medication_log FOR SELECT TO authenticated
@@ -1377,14 +1351,10 @@ CREATE POLICY "Patients read own medication logs"
 
 COMMIT;
 
--- 20261019_pairing_code_status.sql
--- Preserve the 24-hour pairing window and owner visibility after reload.
 BEGIN;
 ALTER TABLE public.pairing_codes ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 ALTER TABLE public.pairing_codes ALTER COLUMN expires_at SET DEFAULT (NOW() + INTERVAL '24 hours');
 
--- Repair unset/immediately-expired timestamps only. Naturally expired codes
--- and used codes keep their existing expiration; reload never renews a code.
 UPDATE public.pairing_codes
 SET expires_at = NOW() + INTERVAL '24 hours'
 WHERE used IS NOT TRUE
@@ -1400,9 +1370,6 @@ CREATE POLICY "Owners read their patient pairing codes"
 GRANT SELECT ON public.pairing_codes TO authenticated;
 COMMIT;
 
--- 20261020_reset_patient_pairing.sql
--- Install the pairing-reset RPC for existing projects, including older builds
--- that use the plural function name. Only the care-plan creator may reset it.
 BEGIN;
 ALTER TABLE public.pairing_codes ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 ALTER TABLE public.pairing_codes ALTER COLUMN expires_at SET DEFAULT (NOW() + INTERVAL '24 hours');

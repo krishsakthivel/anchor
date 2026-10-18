@@ -1,5 +1,3 @@
--- Complete-codebase review: restore shared viewer reads and serialize pairing.
--- Existing editor write policies and restricted family access are preserved.
 BEGIN;
 DROP POLICY IF EXISTS "Caregivers read accessible medications" ON public.medications;
 CREATE POLICY "Caregivers read accessible medications" ON public.medications
@@ -62,8 +60,6 @@ BEGIN
     RAISE EXCEPTION 'Only a patient session can claim a pairing code';
   END IF;
 
-  -- Serialize claims and rate-limit checks for this session, including claims
-  -- for different codes. Locking a code alone does not prevent double pairing.
   PERFORM pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 1));
   IF EXISTS (SELECT 1 FROM patients WHERE paired_user_id = auth.uid()) THEN
     RAISE EXCEPTION 'This patient session is already paired';

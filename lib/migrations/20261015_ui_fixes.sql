@@ -1,5 +1,3 @@
--- Apply once after the existing dated migrations. Existing vital readings are
--- preserved; the NOT VALID constraint validates new inserts/updates only.
 CREATE OR REPLACE FUNCTION valid_vital_reading(p_type TEXT, p_value TEXT)
 RETURNS BOOLEAN LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 DECLARE reading TEXT := btrim(p_value); parts TEXT[];
@@ -18,7 +16,6 @@ ALTER TABLE vital_signs DROP CONSTRAINT IF EXISTS vital_signs_valid_reading;
 ALTER TABLE vital_signs ADD CONSTRAINT vital_signs_valid_reading
   CHECK (valid_vital_reading(type, value)) NOT VALID;
 
--- Include family support for projects originally created from schema.sql too.
 CREATE TABLE IF NOT EXISTS family_codes (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
@@ -50,7 +47,6 @@ BEGIN
   IF auth.uid() IS NULL OR current_profile_role() IS DISTINCT FROM 'caregiver' THEN
     RAISE EXCEPTION 'Please sign in before joining a family';
   END IF;
-  -- Serialize attempts per user so concurrent requests cannot bypass the limit.
   PERFORM pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 0));
   IF (SELECT count(*) FROM family_claim_attempts WHERE user_id = auth.uid()
       AND attempted_at > NOW() - INTERVAL '15 minutes') >= 20 THEN RETURN NULL; END IF;

@@ -1,10 +1,7 @@
--- Preserve the 24-hour pairing window and owner visibility after reload.
 BEGIN;
 ALTER TABLE public.pairing_codes ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 ALTER TABLE public.pairing_codes ALTER COLUMN expires_at SET DEFAULT (NOW() + INTERVAL '24 hours');
 
--- Repair unset/immediately-expired timestamps only. Naturally expired codes
--- and used codes keep their existing expiration; reload never renews a code.
 UPDATE public.pairing_codes
 SET expires_at = NOW() + INTERVAL '24 hours'
 WHERE used IS NOT TRUE

@@ -1,6 +1,5 @@
 BEGIN;
 
--- Do not backfill old schedules with today's date: that would rewrite history.
 ALTER TABLE public.medication_schedule ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
 UPDATE public.medication_schedule s SET created_at = m.created_at
   FROM public.medications m WHERE s.medication_id = m.id AND s.created_at IS NULL;

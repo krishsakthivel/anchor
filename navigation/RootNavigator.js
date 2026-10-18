@@ -59,8 +59,6 @@ export default function RootNavigator() {
           }
           if (!active || current !== generation) return null;
           await setReminderUser(session?.user?.id || null);
-          // Installing a recovery session emits SIGNED_IN. Keep the password
-          // form mounted until it has saved, instead of replacing it with home.
           if (session && navigationRef.current?.getCurrentRoute()?.name === 'ResetPassword') return null;
           return initialDestination(supabase, session);
         });
@@ -75,7 +73,6 @@ export default function RootNavigator() {
     loadRoute();
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'INITIAL_SESSION') return;
-      // Leave the auth callback before making further Supabase requests.
       const timer = setTimeout(() => { timers.delete(timer); if (active) loadRoute(session, true); }, 0);
       timers.add(timer);
     });

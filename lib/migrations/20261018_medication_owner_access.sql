@@ -1,7 +1,3 @@
--- Explicitly recognize the care-plan creator, including on projects with an
--- older access helper or without an owner row in caregiver_patient.
--- Viewer/family users still cannot record medication outcomes.
--- Run in the Supabase SQL Editor for the same project used by Anchor.
 BEGIN;
 
 ALTER TABLE public.medication_log ENABLE ROW LEVEL SECURITY;
@@ -42,7 +38,6 @@ CREATE POLICY "Patients log own medications"
     ))
   );
 
--- The patient flow requests the inserted row back; it needs a SELECT policy too.
 DROP POLICY IF EXISTS "Caregivers read patient medication logs" ON public.medication_log;
 CREATE POLICY "Caregivers read patient medication logs"
   ON public.medication_log FOR SELECT TO authenticated

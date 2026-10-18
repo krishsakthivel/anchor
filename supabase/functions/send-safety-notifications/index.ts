@@ -35,7 +35,6 @@ Deno.serve(async (request) => {
     let accepted = 0;
     for (const job of jobs || []) {
       try {
-        // Recheck permissions: revoking access after enqueue must prevent sends.
         const { data: device } = await admin.from('caregiver_push_tokens').select('user_id').eq('expo_push_token', job.expo_push_token).maybeSingle();
         const { data: checkin } = await admin.from('safety_checkins').select('patient_id, status').eq('id', job.checkin_id).single();
         const { data: patient } = await admin.from('patients').select('created_by').eq('id', checkin?.patient_id).single();
@@ -44,7 +43,6 @@ Deno.serve(async (request) => {
           await admin.from('safety_notification_jobs').update({ state: 'failed', last_error: 'Caregiver access removed' }).eq('id', job.id);
           continue;
         }
-        // Keep names and care details off the lock screen and third-party payload.
         const response = await fetch('https://exp.host/--/api/v2/push/send', {
           method: 'POST', headers: expoHeaders, signal: AbortSignal.timeout(15000),
           body: JSON.stringify({ to: job.expo_push_token, title: 'Anchor help request',
@@ -70,7 +68,6 @@ Deno.serve(async (request) => {
       }
     }
 
-    // Scheduled worker calls also collect receipts after Expo has forwarded pushes.
     if (isWorker) {
       const { data: receipts } = await admin.from('safety_notification_jobs').select('id, ticket_id, expo_push_token').eq('state', 'accepted')
         .lt('updated_at', new Date(Date.now() - 15 * 60000).toISOString()).limit(100);

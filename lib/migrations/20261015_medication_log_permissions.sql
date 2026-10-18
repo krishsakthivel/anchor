@@ -1,5 +1,3 @@
--- Repair medication recording without granting viewer/family editing access.
--- Run in the Supabase SQL Editor for the same project used by Anchor.
 BEGIN;
 
 ALTER TABLE public.medication_log ENABLE ROW LEVEL SECURITY;
@@ -36,7 +34,6 @@ CREATE POLICY "Patients log own medications"
     ))
   );
 
--- The patient flow requests the inserted row back; it needs a SELECT policy too.
 DROP POLICY IF EXISTS "Caregivers read patient medication logs" ON public.medication_log;
 CREATE POLICY "Caregivers read patient medication logs"
   ON public.medication_log FOR SELECT TO authenticated
