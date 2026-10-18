@@ -1,5 +1,5 @@
 import useTabLoader, { TabRefreshContext } from '../lib/useTabLoader';
-const { MOODS } = require('../lib/careValues');
+const { MOODS, normalizeDays } = require('../lib/careValues');
 const { medicationLogError } = require('../lib/medicationLogError');
 const { reportWindow, reportTotals } = require('../lib/reportWindow');
 import { appAlert as Alert } from '../components/AppDialog';
@@ -21,6 +21,9 @@ import {
 import { supabase } from '../lib/supabase';
 import * as Crypto from 'expo-crypto';
 import Button from '../components/Button';
+import MedicationCard from '../components/MedicationCard';
+import WeekdaySelector from '../components/WeekdaySelector';
+const { MEDICATION_DAYS, medicationScheduleError, medicationDaysLabel } = require('../lib/medicationSchedule');
 import TimePickerInput from '../components/TimePickerInput';
 import { writeLocationTag } from '../lib/nfc';
 import { NAVY, WHITE, PLACEHOLDER, SURFACE } from '../theme/colors';
@@ -52,9 +55,12 @@ export default function PatientDetailScreen({ route, navigation }) {
   const [medName, setMedName] = useState('');
   const [medDosage, setMedDosage] = useState('');
   const [medTime, setMedTime] = useState('');
+  const [medDays, setMedDays] = useState([...MEDICATION_DAYS]);
   const [medInstructions, setMedInstructions] = useState('');
   const [medTotalPills, setMedTotalPills] = useState('');
   const [medPillsRemaining, setMedPillsRemaining] = useState('');
+  const [editingTask, setEditingTask] = useState(null);
+  const [taskDays, setTaskDays] = useState([...DAYS]);
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDesc, setTaskDesc] = useState('');
   const [taskTime, setTaskTime] = useState('');
@@ -127,7 +133,9 @@ export default function PatientDetailScreen({ route, navigation }) {
 
 
   const handleAddMedication = async () => {
-    if (!medName.trim()) return;
+    if (!medName.trim() || loading || !canEdit) return;
+    const scheduleValidation = medicationScheduleError(medDays, medTime);
+    if (scheduleValidation) { Alert.alert('Check medication schedule', scheduleValidation); return; }
     const totalPills = medTotalPills.trim() === '' ? null : Number(medTotalPills);
     const pillsRemaining = medPillsRemaining.trim() === '' ? null : Number(medPillsRemaining);
     if ((totalPills !== null && (!Number.isInteger(totalPills) || totalPills < 0))
@@ -180,8 +188,8 @@ export default function PatientDetailScreen({ route, navigation }) {
           medication_id: med.id,
           patient_id: patientId,
           time: enteredTime,
-          frequency: 'daily',
-          days: DAYS,
+          frequency: medDays.length === 7 ? 'daily' : 'weekly',
+          days: MEDICATION_DAYS.filter(day => medDays.includes(day)),
         });
 
       if (scheduleError) {
@@ -198,6 +206,7 @@ export default function PatientDetailScreen({ route, navigation }) {
     setMedName('');
     setMedDosage('');
     setMedTime('');
+    setMedDays([...MEDICATION_DAYS]);
     setMedInstructions('');
     setMedTotalPills('');
     setMedPillsRemaining('');
@@ -207,50 +216,59 @@ export default function PatientDetailScreen({ route, navigation }) {
     } finally { setLoading(false); }
   };
 
-  const handleAddTask = async () => {
-    if (!taskTitle.trim()) return;
-    setLoading(true);
-    try {
-
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      setLoading(false);
-      Alert.alert('Session expired', 'Please sign in again before adding a task.');
-      return;
-    }
-
-    const enteredTime = taskTime.trim();
-    if (enteredTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(enteredTime)) {
-      setLoading(false);
-      Alert.alert('Invalid time', 'Use 24-hour HH:MM format, for example 08:30.');
-      return;
-    }
-
-    const { error } = await supabase
-      .from('tasks')
-      .insert({
-        patient_id: patientId,
-        title: taskTitle.trim(),
-        description: taskDesc.trim() || null,
-        time: enteredTime || null,
-        frequency: 'daily',
-        days: DAYS,
-        created_by: user.id,
-      });
-
-    setLoading(false);
-    if (error) {
-      Alert.alert('Could not add task', error.message || 'Please try again.');
-      return;
-    }
-
+  const closeTaskForm = () => {
+    if (loading) return;
     setAddTaskVisible(false);
+    setEditingTask(null);
     setTaskTitle('');
     setTaskDesc('');
     setTaskTime('');
-    fetchData();
+    setTaskDays([...DAYS]);
+  };
+
+  const openTaskForm = (task = null) => {
+    if (!canEdit || loading) return;
+    setEditingTask(task);
+    setTaskTitle(task?.title || '');
+    setTaskDesc(task?.description || '');
+    setTaskTime(task?.time ? String(task.time).slice(0, 5) : '');
+    setTaskDays(task?.days == null ? [...DAYS] : DAYS.filter(day => normalizeDays(task.days).includes(day)));
+    setAddTaskVisible(true);
+  };
+
+  const handleSaveTask = async () => {
+    if (!taskTitle.trim() || !canEdit || loading) return;
+    if (!taskDays.length) { Alert.alert('Choose task days', 'Select at least one day for this task.'); return; }
+    const enteredTime = taskTime.trim();
+    if (enteredTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(enteredTime)) {
+      Alert.alert('Invalid time', 'Use 24-hour HH:MM format, for example 08:30.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) throw new Error('Your session has expired. Please sign in again.');
+      const values = {
+        title: taskTitle.trim(),
+        description: taskDesc.trim() || null,
+        time: enteredTime || null,
+        frequency: taskDays.length === 7 ? 'daily' : 'weekly',
+        days: DAYS.filter(day => taskDays.includes(day)),
+      };
+      const request = editingTask
+        ? supabase.from('tasks').update(values).eq('id', editingTask.id).eq('patient_id', patientId).select('id').single()
+        : supabase.from('tasks').insert({ ...values, patient_id: patientId, created_by: user.id }).select('id').single();
+      const { error } = await request;
+      if (error) throw error;
+      setAddTaskVisible(false);
+      setEditingTask(null);
+      setTaskTitle('');
+      setTaskDesc('');
+      setTaskTime('');
+      setTaskDays([...DAYS]);
+      await fetchData();
     } catch (error) {
-      Alert.alert('Could not save', error.message || 'Please try again.');
+      Alert.alert(editingTask ? 'Could not update task' : 'Could not add task', error.message || 'Please try again.');
     } finally { setLoading(false); }
   };
 
@@ -333,41 +351,13 @@ export default function PatientDetailScreen({ route, navigation }) {
             {medications.length === 0 ? (
               <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: '#666' }}>No medications added yet</Text>
             ) : (
-              medications.map((med) => (
-                <TouchableOpacity
-                  key={med.id}
-                  onLongPress={() => canEdit && handleDeleteMed(med.id)}
-                  style={{ backgroundColor: SURFACE, padding: s(12), borderRadius: 6, marginBottom: s(8) }}
-                >
-                  <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(15), color: NAVY }}>{med.name}</Text>
-                  {!!med.dosage && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{med.dosage}</Text>}
-                  {!!med.instructions && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#999' }}>{med.instructions}</Text>}
-                  {(() => {
-                    const medSchedules = schedules.filter((schedule) => schedule.medication_id === med.id);
-                    const day = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
-                    const due = medSchedules.length ? medSchedules.filter((schedule) => Array.isArray(schedule.days) ? schedule.days.includes(day) : String(schedule.days || '').includes(day)) : [null];
-                    if (!due.length) return <Text style={{ color: '#666', marginTop: s(7) }}>Not due today</Text>;
-                    return due.map((schedule) => {
-                      const log = medLogs.find((entry) => entry.medication_id === med.id && entry.schedule_id === (schedule?.id || null));
-                      const timeLabel = schedule?.time ? displayTime(String(schedule.time).slice(0, 5)) : 'Any time today';
-                      return <View key={schedule?.id || med.id} style={{ marginTop: s(10), paddingTop: s(9), borderTopWidth: 1, borderTopColor: '#DCE4F2' }}>
-                        <Text style={{ color: NAVY, fontFamily: 'DMSans_500Medium' }}>{timeLabel}, {log ? `Marked ${log.status}` : 'Due today'}</Text>
-                        {canEdit && !log && <View style={{ flexDirection: 'row', marginTop: s(8) }}>
-                          {['taken', 'skipped', 'missed'].map((status) => <TouchableOpacity key={status} disabled={!!loggingId} onPress={() => logMedicine(med, schedule, status)} accessibilityRole="button" style={{ backgroundColor: status === 'taken' ? NAVY : '#E5EAF5', paddingVertical: s(9), paddingHorizontal: s(11), borderRadius: 8, marginRight: s(7), opacity: loggingId ? 0.5 : 1 }}><Text style={{ color: status === 'taken' ? WHITE : NAVY, fontFamily: 'DMSans_500Medium' }}>{status[0].toUpperCase() + status.slice(1)}</Text></TouchableOpacity>)}
-                        </View>}
-                      </View>;
-                    });
-                  })()}
-                  {med.total_pills != null && (
-                    <TouchableOpacity disabled={!canEdit} onPress={() => canEdit && handleUpdatePills(med)}>
-                      <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: med.pills_remaining != null && med.pills_remaining <= (med.refill_alert_at ?? 10) ? '#C0392B' : '#666', marginTop: s(4) }}>
-                        Pills: {med.pills_remaining}/{med.total_pills}
-                        {med.pills_remaining != null && med.pills_remaining <= (med.refill_alert_at ?? 10) ? ' ⚠️ Low' : ''}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </TouchableOpacity>
-              ))
+              medications.map(med => <MedicationCard key={med.id}
+                medication={med}
+                schedules={schedules.filter(schedule => schedule.medication_id === med.id)}
+                logs={medLogs} canEdit={canEdit} busy={!!loggingId} scale={s}
+                onRecord={(schedule, status) => logMedicine(med, schedule, status)}
+                onUpdatePills={() => handleUpdatePills(med)}
+                onDelete={() => handleDeleteMed(med.id)} />)
             )}
           </>
         );
@@ -377,7 +367,7 @@ export default function PatientDetailScreen({ route, navigation }) {
           <>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: s(12) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Tasks</Text>
-              {canEdit && <TouchableOpacity onPress={() => setAddTaskVisible(true)}>
+              {canEdit && <TouchableOpacity onPress={() => openTaskForm()}>
                 <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>+ Add</Text>
               </TouchableOpacity>}
             </View>
@@ -390,7 +380,13 @@ export default function PatientDetailScreen({ route, navigation }) {
                   onLongPress={() => canEdit && handleDeleteTask(task.id)}
                   style={{ backgroundColor: '#F5F5F5', padding: s(12), borderRadius: 8, marginBottom: s(8) }}
                 >
-                  <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(15), color: NAVY }}>{task.title}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: s(8) }}>
+                    <Text style={{ flex: 1, fontFamily: 'DMSans_700Bold', fontSize: s(16), color: NAVY }}>{task.title}</Text>
+                    {canEdit && <TouchableOpacity onPress={() => openTaskForm(task)} disabled={loading} accessibilityRole="button" accessibilityLabel={'Edit ' + task.title} style={{ minHeight: s(44), minWidth: s(48), justifyContent: 'center', alignItems: 'center' }}>
+                      <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>Edit</Text>
+                    </TouchableOpacity>}
+                  </View>
+                  <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#6B7280', marginTop: s(4) }}>{task.days == null ? 'Every day' : medicationDaysLabel(task.days)}{task.time ? ' · ' + displayTime(String(task.time).slice(0, 5)) : ''}</Text>
                   {!!task.description && <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(12), color: '#666' }}>{task.description}</Text>}
                 </TouchableOpacity>
               ))
@@ -422,7 +418,7 @@ export default function PatientDetailScreen({ route, navigation }) {
   };
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: WHITE }}>
       <View style={{ padding: s(20), paddingBottom: 0 }}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginBottom: s(8) }}>
           <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}>← Back</Text>
@@ -463,7 +459,7 @@ export default function PatientDetailScreen({ route, navigation }) {
             <Modal onRequestClose={() => { if (loading) return; setAddMedVisible(false); }} visible={addMedVisible} animationType="slide" transparent>
               <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
-                <ScrollView style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%', maxHeight: '80%' }}>
+                <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: s(24) }} style={{ backgroundColor: WHITE, borderRadius: 12, width: '90%', maxWidth: 480, maxHeight: '85%' }}>
                   <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Medication</Text>
 
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Name *</Text>
@@ -472,7 +468,9 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Dosage</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="e.g. 100mg" placeholderTextColor={PLACEHOLDER} value={medDosage} onChangeText={setMedDosage} />
 
-                  <TimePickerInput label="Medicine time (optional)" value={medTime} onChange={setMedTime} optional />
+                  <WeekdaySelector value={medDays} onChange={setMedDays} disabled={loading} />
+                  <TimePickerInput label={medDays.length === 7 ? 'Medicine time (optional)' : 'Medicine time *'} value={medTime} onChange={setMedTime} optional={medDays.length === 7} />
+                  {medDays.length > 0 && medDays.length < 7 && !medTime && <Text style={{ color: NAVY, fontFamily: 'DMSans_400Regular', fontSize: s(12), marginBottom: s(12) }}>Choose a time for the selected days.</Text>}
 
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Instructions</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="e.g. Take with food" placeholderTextColor={PLACEHOLDER} value={medInstructions} onChangeText={setMedInstructions} />
@@ -483,18 +481,18 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Pills Remaining</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(16) }} placeholder="e.g. 25" placeholderTextColor={PLACEHOLDER} value={medPillsRemaining} onChangeText={setMedPillsRemaining} keyboardType="numeric" />
 
-                  <Button title={loading ? 'Adding' : 'Add Medication'} onPress={handleAddMedication} disabled={!medName.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
-                  <Button title="Cancel" onPress={() => { setAddMedVisible(false); setMedName(''); setMedDosage(''); setMedTime(''); setMedInstructions(''); setMedTotalPills(''); setMedPillsRemaining(''); }} style={{ backgroundColor: '#999' }} />
+                  <Button title={loading ? 'Adding' : 'Add Medication'} onPress={handleAddMedication} disabled={!medName.trim() || loading || !!medicationScheduleError(medDays, medTime)} loading={loading} style={{ marginBottom: s(8) }} />
+                  <Button title="Cancel" disabled={loading} onPress={() => { setAddMedVisible(false); setMedName(''); setMedDosage(''); setMedTime(''); setMedDays([...MEDICATION_DAYS]); setMedInstructions(''); setMedTotalPills(''); setMedPillsRemaining(''); }} style={{ backgroundColor: '#999' }} />
                 </ScrollView>
                 </View>
               </KeyboardAvoidingView>
             </Modal>
 
-            <Modal onRequestClose={() => { if (loading) return; setAddTaskVisible(false); }} visible={addTaskVisible} animationType="slide" transparent>
+            <Modal onRequestClose={closeTaskForm} visible={addTaskVisible} animationType="slide" transparent>
               <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <ScrollView style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: s(24) }} keyboardShouldPersistTaps="handled">
                 <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
-                  <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Task</Text>
+                  <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>{editingTask ? 'Edit Task' : 'Add Task'}</Text>
 
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Title *</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="e.g. Morning walk" placeholderTextColor={PLACEHOLDER} value={taskTitle} onChangeText={setTaskTitle} />
@@ -502,10 +500,11 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Description</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="Optional details" placeholderTextColor={PLACEHOLDER} value={taskDesc} onChangeText={setTaskDesc} />
 
+                  <WeekdaySelector value={taskDays} onChange={setTaskDays} disabled={loading} itemLabel="task" />
                   <TimePickerInput label="Task time (optional)" value={taskTime} onChange={setTaskTime} optional />
 
-                  <Button title={loading ? 'Adding' : 'Add Task'} onPress={handleAddTask} disabled={!taskTitle.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
-                  <Button title="Cancel" onPress={() => { setAddTaskVisible(false); setTaskTitle(''); setTaskDesc(''); setTaskTime(''); }} style={{ backgroundColor: '#999' }} />
+                  <Button title={loading ? 'Saving' : editingTask ? 'Save changes' : 'Add Task'} onPress={handleSaveTask} disabled={!taskTitle.trim() || !taskDays.length || loading} loading={loading} style={{ marginBottom: s(8) }} />
+                  <Button title="Cancel" disabled={loading} onPress={closeTaskForm} style={{ backgroundColor: '#999' }} />
                 </View>
                 </ScrollView>
               </KeyboardAvoidingView>
