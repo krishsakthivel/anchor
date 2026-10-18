@@ -21,7 +21,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
-import { supabase } from '../lib/supabase';
+import { supabase as realSupabase } from '../lib/supabase';
+import { useCaregiverTour, TourPrompt } from '../components/CaregiverTour';
 import Button from '../components/Button';
 import { displayTime } from '../lib/dailyPlan';
 const { localDateKey, advanceCalendarSelection } = require('../lib/localDate');
@@ -59,7 +60,7 @@ const getInitials = (name) => {
   return (first + last).toUpperCase();
 };
 
-async function getPatientSummaries(patientIds) {
+async function getPatientSummaries(patientIds, supabase) {
   const empty = {};
   if (!patientIds.length) return empty;
 
@@ -142,6 +143,8 @@ async function getPatientSummaries(patientIds) {
 }
 
 export default function CaregiverHomeScreen({ navigation }) {
+  const tour = useCaregiverTour();
+  const supabase = tour.client || realSupabase;
   const [caregiverName, setCaregiverName] = useState('');
   const [caregiverId, setCaregiverId] = useState(null);
   const [patients, setPatients] = useState([]);
@@ -258,7 +261,7 @@ export default function CaregiverHomeScreen({ navigation }) {
         ...(medicationRows || []).filter((row) => !scheduledMedicationIds.has(row.id)).map((row) => ({ patientId: row.patient_id, patientName: patientNames.get(row.patient_id) || 'Patient', title: row.name, time: null, days: null, kind: 'Medicine' })),
         ...(taskRows || []).map((row) => ({ patientId: row.patient_id, patientName: patientNames.get(row.patient_id) || 'Patient', title: row.title, time: row.time, days: row.days, kind: 'Task' })),
       ]);
-      scheduleCaregiverMedicationReminders((scheduleRows || [])
+      if (!tour.active) scheduleCaregiverMedicationReminders((scheduleRows || [])
         .map((schedule) => ({ patientId: schedule.patient_id, patientName: patientNames.get(schedule.patient_id) || 'Your patient', medicationName: medicationNames.get(schedule.medication_id) || 'medicine', time: String(schedule.time).slice(0, 5), days: schedule.days })), user.id)
         .catch(() => {});
       setPatients(base.map((patient) => ({
@@ -270,7 +273,7 @@ export default function CaregiverHomeScreen({ navigation }) {
       })));
 
       try {
-        const summaries = await getPatientSummaries(base.map((p) => p.id));
+        const summaries = await getPatientSummaries(base.map((p) => p.id), supabase);
         setPatients(base.map((patient) => ({
           ...patient,
           ...(summaries[patient.id] || { routineTotal: 0, routineDone: 0, lowStockCount: 0, moodToday: null, latestSafety: null, missedMedicationCount: 0 }),
@@ -484,6 +487,7 @@ export default function CaregiverHomeScreen({ navigation }) {
   };
 
   const handleSignOut = async () => {
+    if (tour.active) return;
     try {
       await signOutWithCleanup();
       navigation.reset({ index: 0, routes: [{ name: 'Landing' }] });
@@ -503,7 +507,7 @@ export default function CaregiverHomeScreen({ navigation }) {
         onPress={() => navigation.navigate('PatientDetail', { patientId: item.id, patientName: item.name, canEdit: item.permissionLevel !== 'viewer' })}
         onLongPress={() => isOwner && handleRemovePatient(item)}
         accessibilityLabel={`${item.name} care plan${item.lowStockCount > 0 ? ', medication running low' : ''}`}
-        style={[styles.card, { padding: s(16), borderRadius: 6, marginBottom: s(12) }]}
+        style={[tour.highlight('patient-card'), styles.card, { padding: s(16), borderRadius: 6, marginBottom: s(12) }]}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={[styles.avatar, { width: s(46), height: s(46), borderRadius: s(23) }]}>
@@ -634,7 +638,7 @@ export default function CaregiverHomeScreen({ navigation }) {
                   onPress={() => setAddModalVisible(true)}
                   accessibilityRole="button"
                   accessibilityLabel="Add patient"
-                  style={[styles.iconBtn, { width: s(40), height: s(40), borderRadius: s(20) }]}
+                  style={[tour.highlight('add-patient'), styles.iconBtn, { width: s(40), height: s(40), borderRadius: s(20) }]}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <Ionicons name="add" size={s(24)} color={NAVY} />
@@ -643,7 +647,7 @@ export default function CaregiverHomeScreen({ navigation }) {
                   onPress={() => navigation.navigate('Profile')}
                   accessibilityRole="button"
                   accessibilityLabel="Open settings"
-                  style={[styles.iconBtn, { width: s(40), height: s(40), borderRadius: s(20), marginLeft: s(8) }]}
+                  style={[tour.highlight('settings'), styles.iconBtn, { width: s(40), height: s(40), borderRadius: s(20), marginLeft: s(8) }]}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <Ionicons name="settings-outline" size={s(22)} color={NAVY} />
@@ -652,6 +656,7 @@ export default function CaregiverHomeScreen({ navigation }) {
                   onPress={handleSignOut}
                   accessibilityRole="button"
                   accessibilityLabel="Sign out"
+                  disabled={tour.active}
                   style={[styles.iconBtn, { width: s(40), height: s(40), borderRadius: s(20), marginLeft: s(8) }]}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
@@ -664,7 +669,6 @@ export default function CaregiverHomeScreen({ navigation }) {
               Good {greeting}{caregiverName ? `, ${caregiverName}` : ''}
             </Text>
             {!!homeError && <Text style={{ color: DANGER, marginTop: s(10), fontFamily: 'DMSans_500Medium' }}>{homeError}</Text>}
-            <Button title="Family updates / Join family" onPress={() => navigation.navigate('Family')} style={{ marginTop: s(14) }} />
 
             <View style={{ marginTop: s(18), backgroundColor: SURFACE, borderRadius: 6, padding: s(14) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(18), color: NAVY, marginBottom: s(10) }}>Calendar, next 7 days</Text>
@@ -730,7 +734,7 @@ export default function CaregiverHomeScreen({ navigation }) {
       <Modal onRequestClose={() => { if (addLoading) return; setAddModalVisible(false); }} visible={addModalVisible} animationType="slide" transparent>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <ScrollView style={{ flex: 1, backgroundColor: 'rgba(15,44,107,0.45)' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: s(24) }} keyboardShouldPersistTaps="handled">
-          <View style={[styles.modalCard, { borderRadius: 10, padding: s(24) }]}>
+          <View style={[styles.modalCard, { borderRadius: 10, padding: s(24) }]}><TourPrompt />
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: s(16) }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY }}>
                 Add Patient
@@ -809,7 +813,7 @@ export default function CaregiverHomeScreen({ navigation }) {
 
       <Modal onRequestClose={() => { setSuccessCode(null); }} visible={!!successCode} animationType="fade" transparent>
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { borderRadius: 10, padding: s(24), alignItems: 'center' }]}>
+          <View style={[styles.modalCard, { borderRadius: 10, padding: s(24), alignItems: 'center' }]}><TourPrompt />
             <View style={[styles.avatar, { width: s(52), height: s(52), borderRadius: s(26), backgroundColor: SUCCESS_BG }]}>
               <Ionicons name="checkmark" size={s(26)} color={SUCCESS} />
             </View>

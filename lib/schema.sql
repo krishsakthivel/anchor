@@ -37,7 +37,7 @@ CREATE TABLE caregiver_patient (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   caregiver_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   patient_id UUID REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
-  permission_level TEXT NOT NULL DEFAULT 'owner' CHECK (permission_level IN ('owner', 'editor', 'viewer', 'family')),
+  permission_level TEXT NOT NULL DEFAULT 'owner' CHECK (permission_level IN ('owner', 'editor', 'viewer')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(caregiver_id, patient_id)
 );
@@ -720,46 +720,6 @@ $$;
 REVOKE ALL ON FUNCTION check_in_activity(UUID, INTEGER, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION check_in_activity(UUID, INTEGER, TEXT) TO authenticated;
 
-CREATE OR REPLACE FUNCTION family_status()
-RETURNS TABLE (patient_id UUID, patient_name TEXT, medication_status TEXT, care_status TEXT)
-LANGUAGE SQL
-SECURITY DEFINER
-STABLE
-SET search_path = public
-AS $$
-  WITH family_patients AS (
-    SELECT p.id, p.name
-    FROM patients p
-    JOIN caregiver_patient cp ON cp.patient_id = p.id
-    WHERE cp.caregiver_id = auth.uid() AND cp.permission_level = 'family'
-  ), today_logs AS (
-    SELECT ml.patient_id,
-      COUNT(*) FILTER (WHERE ml.status = 'taken') AS taken,
-      COUNT(*) FILTER (WHERE ml.status = 'missed') AS missed
-    FROM medication_log ml
-    WHERE ml.log_day = CURRENT_DATE
-    GROUP BY ml.patient_id
-  ), today_moods AS (
-    SELECT DISTINCT ON (patient_id) patient_id, mood
-    FROM mood_logs
-    WHERE logged_at >= date_trunc('day', NOW())
-    ORDER BY patient_id, logged_at DESC
-  )
-  SELECT fp.id,
-    fp.name,
-    CASE
-      WHEN COALESCE(tl.missed, 0) > 0 THEN 'Medication missed'
-      WHEN COALESCE(tl.taken, 0) > 0 THEN 'Medication checked'
-      ELSE 'No medication update yet'
-    END,
-    CASE WHEN tm.mood IS NULL THEN 'No mood update yet' WHEN tm.mood <= 2 THEN 'Needs extra care' ELSE 'Doing okay' END
-  FROM family_patients fp
-  LEFT JOIN today_logs tl ON tl.patient_id = fp.id
-  LEFT JOIN today_moods tm ON tm.patient_id = fp.id;
-$$;
-
-REVOKE ALL ON FUNCTION family_status() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION family_status() TO authenticated;
 
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
@@ -947,58 +907,6 @@ ALTER TABLE vital_signs DROP CONSTRAINT IF EXISTS vital_signs_valid_reading;
 ALTER TABLE vital_signs ADD CONSTRAINT vital_signs_valid_reading
   CHECK (valid_vital_reading(type, value)) NOT VALID;
 
-CREATE TABLE IF NOT EXISTS family_codes (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  patient_id UUID REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
-  caregiver_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-  code TEXT NOT NULL UNIQUE CHECK (code ~ '^[0-9]{8}$'),
-  used BOOLEAN DEFAULT FALSE NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '7 days'),
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-ALTER TABLE family_codes ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Caregivers manage family codes" ON family_codes;
-CREATE POLICY "Caregivers manage family codes" ON family_codes FOR ALL
-  USING (has_patient_access(patient_id, 'owner'))
-  WITH CHECK (has_patient_access(patient_id, 'owner') AND caregiver_id = auth.uid());
-
-CREATE TABLE IF NOT EXISTS family_claim_attempts (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-  attempted_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
-);
-ALTER TABLE family_claim_attempts ENABLE ROW LEVEL SECURITY;
-CREATE INDEX IF NOT EXISTS family_claim_attempts_user_time_idx
-  ON family_claim_attempts(user_id, attempted_at);
-
-CREATE OR REPLACE FUNCTION claim_family_code(p_code TEXT)
-RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE code_row family_codes%ROWTYPE;
-BEGIN
-  IF auth.uid() IS NULL OR current_profile_role() IS DISTINCT FROM 'caregiver' THEN
-    RAISE EXCEPTION 'Please sign in before joining a family';
-  END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 0));
-  IF (SELECT count(*) FROM family_claim_attempts WHERE user_id = auth.uid()
-      AND attempted_at > NOW() - INTERVAL '15 minutes') >= 20 THEN RETURN NULL; END IF;
-  INSERT INTO family_claim_attempts(user_id) VALUES (auth.uid());
-  SELECT * INTO code_row FROM family_codes
-    WHERE code = btrim(p_code) AND used = FALSE AND expires_at > NOW() FOR UPDATE;
-  IF NOT FOUND THEN RETURN NULL; END IF;
-  IF has_patient_access(code_row.patient_id, 'viewer') THEN
-    RAISE EXCEPTION 'You already have caregiver access to this person';
-  END IF;
-  INSERT INTO caregiver_patient(caregiver_id, patient_id, permission_level)
-    VALUES (auth.uid(), code_row.patient_id, 'family')
-    ON CONFLICT (caregiver_id, patient_id) DO NOTHING;
-  UPDATE family_codes SET used = TRUE WHERE id = code_row.id;
-  RETURN code_row.patient_id;
-END;
-$$;
-REVOKE ALL ON FUNCTION claim_family_code(TEXT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION claim_family_code(TEXT) TO authenticated;
-
-
 CREATE TABLE IF NOT EXISTS caregiver_push_tokens (
   expo_push_token TEXT PRIMARY KEY CHECK (expo_push_token ~ '^(ExponentPushToken|ExpoPushToken)\[[^]]+\]$'),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -1125,32 +1033,6 @@ UPDATE public.medication_schedule s SET created_at = m.created_at
   FROM public.medications m WHERE s.medication_id = m.id AND s.created_at IS NULL;
 ALTER TABLE public.medication_schedule ALTER COLUMN created_at SET DEFAULT NOW();
 
-CREATE OR REPLACE FUNCTION public.family_status()
-RETURNS TABLE (patient_id UUID, patient_name TEXT, medication_status TEXT, care_status TEXT)
-LANGUAGE SQL SECURITY DEFINER STABLE SET search_path = public AS $$
-  WITH family_patients AS (
-    SELECT p.id, p.name FROM patients p JOIN caregiver_patient cp ON cp.patient_id = p.id
-    WHERE cp.caregiver_id = auth.uid() AND cp.permission_level = 'family'
-  ), today_logs AS (
-    SELECT ml.patient_id,
-      COUNT(*) FILTER (WHERE ml.status = 'taken') AS taken,
-      COUNT(*) FILTER (WHERE ml.status = 'missed') AS missed
-    FROM medication_log ml WHERE ml.log_day = CURRENT_DATE GROUP BY ml.patient_id
-  ), today_moods AS (
-    SELECT DISTINCT ON (patient_id) patient_id, mood FROM mood_logs
-    WHERE logged_at >= date_trunc('day', NOW()) ORDER BY patient_id, logged_at DESC
-  )
-  SELECT fp.id, fp.name,
-    CASE WHEN COALESCE(tl.missed, 0) > 0 THEN 'Medication missed'
-      WHEN COALESCE(tl.taken, 0) > 0 THEN 'Medication checked'
-      ELSE 'No medication update yet' END,
-    CASE WHEN tm.mood IS NULL THEN 'No mood update yet'
-      WHEN tm.mood <= 2 THEN 'Needs extra care' ELSE 'Doing okay' END
-  FROM family_patients fp LEFT JOIN today_logs tl ON tl.patient_id = fp.id
-    LEFT JOIN today_moods tm ON tm.patient_id = fp.id;
-$$;
-REVOKE ALL ON FUNCTION public.family_status() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.family_status() TO authenticated;
 
 COMMIT;
 
@@ -1442,4 +1324,23 @@ REVOKE ALL ON FUNCTION public.update_medication_stock() FROM PUBLIC;
 DROP TRIGGER IF EXISTS medication_log_stock ON public.medication_log;
 CREATE TRIGGER medication_log_stock BEFORE INSERT OR DELETE ON public.medication_log
   FOR EACH ROW EXECUTE FUNCTION public.update_medication_stock();
+COMMIT;
+
+BEGIN;
+DO $retire_family$
+BEGIN
+  IF to_regprocedure('public.claim_family_code(text)') IS NOT NULL THEN
+    REVOKE ALL ON FUNCTION public.claim_family_code(TEXT) FROM PUBLIC, anon, authenticated;
+  END IF;
+  IF to_regprocedure('public.family_status()') IS NOT NULL THEN
+    REVOKE ALL ON FUNCTION public.family_status() FROM PUBLIC, anon, authenticated;
+  END IF;
+  IF to_regclass('public.family_codes') IS NOT NULL THEN
+    REVOKE ALL ON TABLE public.family_codes FROM PUBLIC, anon, authenticated;
+  END IF;
+  IF to_regclass('public.family_claim_attempts') IS NOT NULL THEN
+    REVOKE ALL ON TABLE public.family_claim_attempts FROM PUBLIC, anon, authenticated;
+  END IF;
+END;
+$retire_family$;
 COMMIT;

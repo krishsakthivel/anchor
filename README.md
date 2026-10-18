@@ -34,13 +34,13 @@ Configure a password-recovery redirect URL in Supabase Auth for `anchor://reset-
 
 Apply `lib/migrations/20261015_ui_fixes.sql` and `lib/migrations/20261015_help_notifications.sql` once after the older migrations. Fresh installs include these definitions in `lib/schema.sql`. See `supabase/README.md` for deploying help notifications and configuring a phone build. Code changes alone do not apply database migrations or deploy the server function.
 
-If Taken/Skipped/Missed reports a row-level-security violation for `medication_log`, apply `lib/migrations/20261015_medication_log_permissions.sql` in the connected project's Supabase SQL Editor. This restores restricted recording policies for owners, editors, and paired patients; viewers and family members remain read-only. Expo rehosting does not install database policies.
+If Taken/Skipped/Missed reports a row-level-security violation for `medication_log`, apply `lib/migrations/20261015_medication_log_permissions.sql` in the connected project's Supabase SQL Editor. This restores restricted recording policies for owners, editors, and paired patients; viewers remain read-only. Expo rehosting does not install database policies.
 
-Then apply `lib/migrations/20261016_remaining_fixes.sql` to record new medication schedule creation dates and show missing mood data accurately in family status. Historical schedule dates fall back to the parent medication's creation date.
+Then apply `lib/migrations/20261016_remaining_fixes.sql` to record new medication schedule creation dates. Historical schedule dates fall back to the parent medication's creation date.
 
-Apply `lib/migrations/20261017_codebase_review.sql` after those migrations. It restores read access for shared viewers without granting editing access or expanding family access, and serializes patient pairing claims to prevent simultaneous requests pairing one session to multiple patients. These definitions are also included in the fresh-install schema.
+Apply `lib/migrations/20261017_codebase_review.sql` after those migrations. It restores read access for shared viewers without granting editing access, and serializes patient pairing claims to prevent simultaneous requests pairing one session to multiple patients. These definitions are also included in the fresh-install schema.
 
-If the care-plan creator still receives a medication permission error, apply `lib/migrations/20261018_medication_owner_access.sql` in the same hosted project. It checks `patients.created_by` directly, so the owner does not need a duplicate sharing entry or an updated access helper. It can safely be rerun and preserves viewer/family write restrictions.
+If the care-plan creator still receives a medication permission error, apply `lib/migrations/20261018_medication_owner_access.sql` in the same hosted project. It checks `patients.created_by` directly, so the owner does not need a duplicate sharing entry or an updated access helper. It can safely be rerun and preserves viewer write restrictions.
 
 For false pairing-code expiry after reload, apply `lib/migrations/20261019_pairing_code_status.sql`. It restores direct owner reads and the 24-hour default, repairing null or immediately-expired unused codes. Naturally expired and used codes are preserved; reloading never renews a code.
 
@@ -52,3 +52,5 @@ If Get a new pairing code reports a missing `reset_patient_pairing` or `reset_pa
 npx expo-doctor
 npx expo export --platform web
 ```
+
+Family access has been removed. For an existing Supabase project, run `lib/migrations/20261022_remove_family_access.sql` in SQL Editor after all earlier migrations. It disables the old code-claim/status RPCs and access to retired code tables without deleting records. Fresh installs omit the family feature.

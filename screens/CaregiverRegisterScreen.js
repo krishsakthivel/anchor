@@ -13,6 +13,7 @@ import styles from './CaregiverLoginScreen.styles';
 import { PLACEHOLDER, WHITE } from '../theme/colors';
 import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
+const { TUTORIAL_VERSION } = require('../lib/caregiverTutorial');
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -55,7 +56,7 @@ export default function CaregiverRegisterScreen({ navigation }) {
         email: email.trim(),
         password,
         options: {
-          data: { role: 'caregiver' },
+          data: { role: 'caregiver', caregiver_tutorial_version: TUTORIAL_VERSION, caregiver_tutorial_completed: false },
         },
       }));
     } catch (err) {
@@ -73,11 +74,11 @@ export default function CaregiverRegisterScreen({ navigation }) {
     }
 
     if (!data.session) {
-      navigation.navigate('CaregiverLogin');
+      navigation.navigate('CaregiverLogin', { registrationPending: true });
       return;
     }
 
-    navigation.navigate('CaregiverHome');
+    navigation.navigate('CaregiverTutorial');
   };
 
   return (

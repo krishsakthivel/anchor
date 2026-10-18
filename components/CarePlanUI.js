@@ -1,4 +1,5 @@
 import React from 'react';
+import { useCaregiverTour } from './CaregiverTour';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NAVY, WHITE, BORDER, MUTED, SURFACE, DANGER, DANGER_BG } from '../theme/colors';
@@ -16,7 +17,8 @@ export function CareAction({ label, onPress, disabled, accessibilityLabel, scale
 }
 
 export function CareSectionHeader({ title, action, onPress, scale: s = identity }) {
-  return <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: s(44), marginBottom: s(8), gap: s(8) }}>
+  const tour = useCaregiverTour();
+  return <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: s(44), marginBottom: s(8), gap: s(8), ...tour.highlight(`section-${title}`) }}>
     <Text style={{ flex: 1, fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>{title}</Text>
     {!!action && <CareAction label={action} onPress={onPress} scale={s} />}
   </View>;

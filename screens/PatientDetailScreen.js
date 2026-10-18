@@ -18,7 +18,8 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { supabase } from '../lib/supabase';
+import { supabase as realSupabase } from '../lib/supabase';
+import { useCaregiverTour, TourPrompt } from '../components/CaregiverTour';
 import * as Crypto from 'expo-crypto';
 import Button from '../components/Button';
 import MedicationCard from '../components/MedicationCard';
@@ -37,9 +38,14 @@ const TABS = ['Medications', 'Tasks', 'Schedule', 'Notes', 'Vitals', 'Appointmen
 const REPORT_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 export default function PatientDetailScreen({ route, navigation }) {
+  const tour = useCaregiverTour();
+  const supabase = tour.client || realSupabase;
   const { patientId, patientName, canEdit = true, initialTab = 'Medications' } = route.params;
   const { width } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState(initialTab);
+  const tourTabs = React.useRef(null);
+  const tabPositions = React.useRef({});
+  const revealTourTab = () => { if (tour.active) tourTabs.current?.scrollTo({ x: tabPositions.current[initialTab] || 0, animated: false }); };
   const [medications, setMedications] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -421,12 +427,14 @@ export default function PatientDetailScreen({ route, navigation }) {
         <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY, marginBottom: s(12) }}>{patientName}</Text>
         <Button title="Refresh care plan" onPress={onRefresh} disabled={refreshing} loading={refreshing} style={{ marginBottom: s(12) }} />
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: s(12) }}>
+        <ScrollView ref={tourTabs} onContentSizeChange={revealTourTab} horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: s(12) }}>
           {TABS.map((tab) => (
             <TouchableOpacity
               key={tab}
+              onLayout={event => { tabPositions.current[tab] = event.nativeEvent.layout.x; if (tab === initialTab) revealTourTab(); }}
               onPress={() => setActiveTab(tab)}
               style={{
+                ...tour.highlight(`tab-${tab}`),
                 paddingHorizontal: s(14),
                 paddingVertical: s(8),
                 borderRadius: 20,
@@ -455,7 +463,7 @@ export default function PatientDetailScreen({ route, navigation }) {
               <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
                 <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: s(24) }} style={{ backgroundColor: WHITE, borderRadius: 12, width: '90%', maxWidth: 480, maxHeight: '85%' }}>
-                  <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>{editingMedication ? 'Edit Medication' : 'Add Medication'}</Text>
+                  <TourPrompt /><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>{editingMedication ? 'Edit Medication' : 'Add Medication'}</Text>
                   <CareError message={medError} scale={s} />
                   {editingMedication && schedules.filter(schedule => schedule.medication_id === editingMedication.id).length > 1 && <View style={{ marginBottom: s(12) }}><CareBody scale={s}>Choose the dose time to edit. Other dose times stay unchanged.</CareBody><View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{schedules.filter(schedule => schedule.medication_id === editingMedication.id).map(schedule => <TouchableOpacity key={schedule.id} onPress={() => selectMedicationSchedule(schedule)} disabled={loading} accessibilityRole="button" accessibilityState={{ selected: editingSchedule?.id === schedule.id }} style={{ padding: s(10), marginRight: s(6), marginBottom: s(6), borderRadius: 8, backgroundColor: editingSchedule?.id === schedule.id ? NAVY : SURFACE }}><Text style={{ color: editingSchedule?.id === schedule.id ? WHITE : NAVY }}>{displayTime(String(schedule.time).slice(0, 5))}</Text></TouchableOpacity>)}</View></View>}
 
@@ -505,7 +513,7 @@ export default function PatientDetailScreen({ route, navigation }) {
               <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <ScrollView style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: s(24) }} keyboardShouldPersistTaps="handled">
                 <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
-                  <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>{editingTask ? 'Edit Task' : 'Add Task'}</Text>
+                  <TourPrompt /><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>{editingTask ? 'Edit Task' : 'Add Task'}</Text>
 
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Title *</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="e.g. Morning walk" placeholderTextColor={PLACEHOLDER} value={taskTitle} onChangeText={setTaskTitle} />
@@ -530,6 +538,8 @@ export default function PatientDetailScreen({ route, navigation }) {
 }
 
 function DailyScheduleTab({ patientId, canEdit }) {
+  const tour = useCaregiverTour();
+  const supabase = tour.client || realSupabase;
   const { width } = useWindowDimensions();
   const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [plan, setPlan] = useState(null);
@@ -652,6 +662,7 @@ function DailyScheduleTab({ patientId, canEdit }) {
     setPlaceBusy(true);
     setPlaceError('');
     try {
+      if (tour.active) { setPlaceError('Sticker writing is disabled in practice. Use an installed app and a physical sticker later.'); return; }
       await writeLocationTag(place.tag_token);
       Alert.alert('Sticker ready', `${place.name} is ready for activity check-ins.`);
     } catch (error) {
@@ -733,7 +744,7 @@ function DailyScheduleTab({ patientId, canEdit }) {
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(8) }}>{editingBlock?.index === null ? 'Add schedule activity' : 'Edit schedule activity'}</Text>
               <CareBody scale={s}>Changes apply to today's schedule only. Other activities keep their times.</CareBody>
               {plan?.blocks?.[editingBlock?.index]?.type === 'medicine' && <CareBody scale={s}>This changes the schedule activity only. Medication dose times and reminders stay the same.</CareBody>}
-              <CareError message={editError} scale={s} />
+              <TourPrompt /><CareError message={editError} scale={s} />
               <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Activity name</Text>
               <TextInput accessibilityLabel="Activity name" value={blockTitle} onChangeText={setBlockTitle} editable={!saving} maxLength={120} style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: NAVY, borderWidth: 1, borderColor: BORDER, borderRadius: 8, padding: s(12), marginBottom: s(12) }} />
               <TimePickerInput key={editingBlock ? `${editingBlock.planId}-${editingBlock.index}` : 'closed'} label="Start time" value={blockTime} onChange={setBlockTime} />
@@ -758,6 +769,8 @@ function DailyScheduleTab({ patientId, canEdit }) {
 }
 
 function CareNotesTab({ patientId, canEdit }) {
+  const tour = useCaregiverTour();
+  const supabase = tour.client || realSupabase;
   const { width } = useWindowDimensions();
   const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [notes, setNotes] = useState([]);
@@ -843,16 +856,16 @@ function CareNotesTab({ patientId, canEdit }) {
       ))}
       <Modal onRequestClose={() => { if (loading) return; setAddVisible(false); }} visible={addVisible} animationType="slide" transparent>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+        <ScrollView style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: s(24) }} keyboardShouldPersistTaps="handled">
           <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>{editingNote ? 'Edit Note' : 'Add Note'}</Text>
-            <CareError message={noteError} scale={s} />
+            <TourPrompt /><CareError message={noteError} scale={s} />
             <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="Title" placeholderTextColor={PLACEHOLDER} value={noteTitle} onChangeText={setNoteTitle} />
             <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, height: s(100), textAlignVertical: 'top', marginBottom: s(16) }} placeholder="Note" placeholderTextColor={PLACEHOLDER} value={noteBody} onChangeText={setNoteBody} multiline />
                   <Button title={editingNote ? 'Save changes' : 'Add'} onPress={handleAdd} disabled={!noteTitle.trim() || !noteBody.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
             <Button title="Cancel" disabled={loading} onPress={() => { setAddVisible(false); setNoteTitle(''); setNoteBody(''); }} style={{ backgroundColor: '#999' }} />
           </View>
-        </View>
+        </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
     </>
@@ -860,6 +873,8 @@ function CareNotesTab({ patientId, canEdit }) {
 }
 
 function VitalsTab({ patientId }) {
+  const tour = useCaregiverTour();
+  const supabase = tour.client || realSupabase;
   const { width } = useWindowDimensions();
   const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [vitals, setVitals] = useState([]);
@@ -893,6 +908,8 @@ function VitalsTab({ patientId }) {
 }
 
 function AppointmentsTab({ patientId, navigation, canEdit }) {
+  const tour = useCaregiverTour();
+  const supabase = tour.client || realSupabase;
   const { width } = useWindowDimensions();
   const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [appointments, setAppointments] = useState([]);
@@ -924,6 +941,8 @@ function AppointmentsTab({ patientId, navigation, canEdit }) {
 }
 
 function MoodTab({ patientId }) {
+  const tour = useCaregiverTour();
+  const supabase = tour.client || realSupabase;
   const { width } = useWindowDimensions();
   const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [moods, setMoods] = useState([]);
@@ -954,6 +973,8 @@ function MoodTab({ patientId }) {
 }
 
 function ReportTab({ patientId }) {
+  const tour = useCaregiverTour();
+  const supabase = tour.client || realSupabase;
   const { width } = useWindowDimensions();
   const s = (size) => Math.round(size * Math.min(1.08, Math.max(0.95, width / 375)));
   const [report, setReport] = useState(null);

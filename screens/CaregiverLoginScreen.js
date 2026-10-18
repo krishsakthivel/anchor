@@ -14,10 +14,11 @@ import styles from './CaregiverLoginScreen.styles';
 import { PLACEHOLDER, WHITE } from '../theme/colors';
 import { supabase } from '../lib/supabase';
 import Button from '../components/Button';
+const { needsCaregiverTutorial } = require('../lib/caregiverTutorial');
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-export default function CaregiverLoginScreen({ navigation }) {
+export default function CaregiverLoginScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -44,8 +45,9 @@ export default function CaregiverLoginScreen({ navigation }) {
     setLoading(true);
 
     let signInError;
+    let data;
     try {
-      ({ error: signInError } = await supabase.auth.signInWithPassword({
+      ({ data, error: signInError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       }));
@@ -63,7 +65,7 @@ export default function CaregiverLoginScreen({ navigation }) {
       return;
     }
 
-    navigation.navigate('CaregiverHome');
+    navigation.navigate(needsCaregiverTutorial(data?.user || data?.session?.user) ? 'CaregiverTutorial' : 'CaregiverHome');
   };
 
   return (
@@ -87,6 +89,7 @@ export default function CaregiverLoginScreen({ navigation }) {
           Sign in to manage your patient's care.
         </Text>
 
+        {!!route?.params?.registrationPending && <Text style={[styles.subtitle, { fontSize: s(14), marginBottom: s(16) }]}>Check your email for account confirmation, then log in to start your caregiver tutorial.</Text>}
         <Text style={[styles.label, { fontSize: s(15), marginBottom: height * 0.01 }]}>Email</Text>
         <TextInput
           style={[

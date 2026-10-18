@@ -1,0 +1,50 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { createTourClient } = require('../lib/tourClient');
+const { STEPS, TUTORIAL_VERSION, needsCaregiverTutorial } = require('../lib/caregiverTutorial');
+const { initialDestination } = require('../lib/startup');
+test('practice edits are isolated and survive a saved-workspace reload', async () => {
+  const writes = [];
+  const practice = createTourClient(null, event => writes.push(event));
+  const { data: patient } = await practice.from('patients').insert({ name: 'Alex', created_by: 'tour-caregiver' }).select().single();
+  const { data: medicine } = await practice.from('medications').insert({ patient_id: patient.id, name: 'Example', pills_remaining: 20 }).select().single();
+  await practice.from('medications').update({ pills_remaining: 12 }).eq('id', medicine.id);
+  const snapshot = practice.snapshot();
+  const resumed = createTourClient(snapshot);
+  snapshot.medications[0].pills_remaining = 999;
+  assert.equal((await resumed.from('medications').select().eq('id', medicine.id).single()).data.pills_remaining, 12);
+  const reading = (await resumed.from('vital_signs').select().eq('patient_id', patient.id)).data[0];
+  assert.equal(reading.value, '98');
+  await resumed.from('medications').delete().eq('id', medicine.id);
+  assert.equal((await resumed.from('medications').select()).data.length, 0);
+  assert.equal((await practice.from('medications').select()).data.length, 1);
+  assert.equal(writes.length, 3);
+  assert.equal(practice.auth.updateUser, undefined);
+});
+test('practice queries scope writes and execute a request once', async () => {
+  const practice = createTourClient();
+  await practice.from('tasks').insert([{ id: 'a', title: 'A', active: true }, { id: 'b', title: 'B', active: true }]);
+  await practice.from('tasks').update({ title: 'Changed' }).eq('id', 'b');
+  assert.equal((await practice.from('tasks').select().eq('id', 'a').single()).data.title, 'A');
+  const request = practice.from('tasks').insert({ title: 'Once' });
+  await request; await request;
+  assert.equal((await practice.from('tasks').select()).data.length, 3);
+  await practice.from('caregiver_phone').upsert({ user_id: 'tour-caregiver', phone: '123' });
+  await practice.from('caregiver_phone').upsert({ user_id: 'tour-caregiver', phone: '456' });
+  assert.equal((await practice.from('caregiver_phone').select()).data.length, 1);
+});
+test('new caregivers are enrolled without forcing existing or patient accounts', async () => {
+  const user = { id: 'new', user_metadata: { caregiver_tutorial_version: TUTORIAL_VERSION, caregiver_tutorial_completed: false } };
+  assert.equal(needsCaregiverTutorial(user), true);
+  assert.equal(needsCaregiverTutorial({ ...user, is_anonymous: true }), false);
+  assert.equal(needsCaregiverTutorial({ id: 'existing' }), false);
+  assert.equal(needsCaregiverTutorial({ ...user, user_metadata: { caregiver_tutorial_version: 2, caregiver_tutorial_completed: false } }), false);
+  assert.equal(needsCaregiverTutorial({ ...user, user_metadata: { ...user.user_metadata, caregiver_tutorial_completed: true } }), false);
+  const client = { from: () => ({ select() { return this; }, eq() { return this; }, async maybeSingle() { return { data: { role: 'caregiver' } }; } }) };
+  assert.equal((await initialDestination(client, { user })).route, 'CaregiverTutorial');
+});
+test('the walkthrough uses real app actions instead of quizzes', () => {
+  assert.ok(STEPS.some(step => step.write === 'patients'));
+  for (const table of ['medications', 'tasks', 'daily_plans', 'care_notes', 'appointments']) assert.ok(STEPS.some(step => step.write === table));
+  assert.ok(STEPS.every(step => !step.question && !step.choices));
+});

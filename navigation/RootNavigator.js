@@ -10,6 +10,7 @@ const { withTimeout, initialDestination } = require('../lib/startup');
 import LandingScreen from '../screens/LandingScreen';
 import CaregiverLoginScreen from '../screens/CaregiverLoginScreen';
 import CaregiverRegisterScreen from '../screens/CaregiverRegisterScreen';
+import CaregiverTutorialScreen from '../screens/CaregiverTutorialScreen';
 import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
 import ResetPasswordScreen from '../screens/ResetPasswordScreen';
 import PatientHomeScreen from '../screens/PatientHomeScreen';
@@ -22,7 +23,6 @@ import CareNotesScreen from '../screens/CareNotesScreen';
 import MoodCheckinScreen from '../screens/MoodCheckinScreen';
 import VitalsScreen from '../screens/VitalsScreen';
 import WeeklyReportScreen from '../screens/WeeklyReportScreen';
-import FamilyScreen from '../screens/FamilyScreen';
 import { supabase } from '../lib/supabase';
 
 const Stack = createNativeStackNavigator();
@@ -97,6 +97,7 @@ export default function RootNavigator() {
             <Stack.Screen name="Landing" component={LandingScreen} />
             <Stack.Screen name="CaregiverLogin" component={CaregiverLoginScreen} />
             <Stack.Screen name="CaregiverRegister" component={CaregiverRegisterScreen} />
+            <Stack.Screen name="CaregiverTutorial" component={CaregiverTutorialScreen} options={{ headerBackButtonMenuEnabled: false }} />
             <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
             <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
             <Stack.Screen
@@ -113,7 +114,6 @@ export default function RootNavigator() {
             <Stack.Screen name="MoodCheckin" component={MoodCheckinScreen} />
             <Stack.Screen name="Vitals" component={VitalsScreen} />
             <Stack.Screen name="WeeklyReport" component={WeeklyReportScreen} />
-            <Stack.Screen name="Family" component={FamilyScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaView>

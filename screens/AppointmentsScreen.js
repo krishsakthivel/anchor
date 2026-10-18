@@ -14,13 +14,16 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { supabase } from '../lib/supabase';
+import { supabase as realSupabase } from '../lib/supabase';
+import { useCaregiverTour, TourPrompt } from '../components/CaregiverTour';
 import useCustomFonts from '../lib/useCustomFonts';
 import Button from '../components/Button';
 import TimePickerInput from '../components/TimePickerInput';
 import { NAVY, WHITE, PLACEHOLDER, SURFACE } from '../theme/colors';
 
 export default function AppointmentsScreen({ route, navigation }) {
+  const tour = useCaregiverTour();
+  const supabase = tour.client || realSupabase;
   const { patientId, isPatient } = route.params;
   const { width } = useWindowDimensions();
   const { fontsLoaded, FontProvider } = useCustomFonts();
@@ -170,7 +173,7 @@ export default function AppointmentsScreen({ route, navigation }) {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: s(16) }}>
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY }}>Appointments</Text>
             {!isPatient && (
-              <TouchableOpacity onPress={() => { setFormError(''); setAddVisible(true); }}>
+              <TouchableOpacity style={tour.highlight('appointment-add')} onPress={() => { setFormError(''); setAddVisible(true); }}>
                 <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>+ Add</Text>
               </TouchableOpacity>
             )}
@@ -249,7 +252,7 @@ export default function AppointmentsScreen({ route, navigation }) {
               keyboardShouldPersistTaps="handled"
             >
             <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%', maxWidth: 440 }}>
-              <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Appointment</Text>
+              <TourPrompt /><Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Appointment</Text>
               {!!formError && <Text accessibilityRole="alert" style={{ color: '#C0392B', marginBottom: s(12) }}>{formError}</Text>}
 
               <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Title *</Text>
