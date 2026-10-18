@@ -67,6 +67,9 @@ export default function PatientDetailScreen({ route, navigation }) {
   const [taskDesc, setTaskDesc] = useState('');
   const [taskTime, setTaskTime] = useState('');
   const [loading, setLoading] = useState(false);
+  const [pillMedication, setPillMedication] = useState(null);
+  const [pillCount, setPillCount] = useState('');
+  const [pillError, setPillError] = useState('');
 
   const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
@@ -310,32 +313,29 @@ export default function PatientDetailScreen({ route, navigation }) {
     ]);
   };
 
-  const handleUpdatePills = async (med) => {
-    Alert.alert('Update Pills', `Remaining: ${med.pills_remaining || 0}`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Subtract 1',
-        onPress: async () => {
-          const { error } = await supabase
-            .from('medications')
-            .update({ pills_remaining: Math.max(0, (med.pills_remaining || 0) - 1) })
-            .eq('id', med.id);
-          if (error) Alert.alert('Error', error.message || 'Could not update the pill count.');
-          else await fetchData();
-        },
-      },
-      {
-        text: 'Refill',
-        onPress: async () => {
-          const { error } = await supabase
-            .from('medications')
-            .update({ pills_remaining: med.total_pills ?? 30 })
-            .eq('id', med.id);
-          if (error) Alert.alert('Error', error.message || 'Could not update the pill count.');
-          else await fetchData();
-        },
-      },
-    ]);
+  const handleUpdatePills = (med) => {
+    if (!canEdit || loading) return;
+    setPillMedication(med);
+    setPillCount(med.pills_remaining == null ? '' : String(med.pills_remaining));
+    setPillError('');
+  };
+
+  const savePillCount = async () => {
+    if (!pillMedication || !canEdit || loading) return;
+    const count = Number(pillCount.trim());
+    if (!/^\d+$/.test(pillCount.trim()) || !Number.isSafeInteger(count) || count > 2147483647 || (pillMedication.total_pills != null && count > pillMedication.total_pills)) {
+      setPillError('Enter a whole number from 0 to ' + (pillMedication.total_pills ?? 2147483647) + '.');
+      return;
+    }
+    setLoading(true);
+    setPillError('');
+    try {
+      const { error } = await supabase.from('medications').update({ pills_remaining: count }).eq('id', pillMedication.id).eq('patient_id', patientId).select('id').single();
+      if (error) throw error;
+      setPillMedication(null);
+      await fetchData();
+    } catch (error) { setPillError(error.message || 'Could not update the pill count. Please try again.'); }
+    finally { setLoading(false); }
   };
 
   const renderTab = () => {
@@ -468,6 +468,22 @@ export default function PatientDetailScreen({ route, navigation }) {
               </KeyboardAvoidingView>
             </Modal>
 
+            <Modal visible={!!pillMedication} transparent animationType="slide" onRequestClose={() => { if (!loading) setPillMedication(null); }}>
+              <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: s(20), backgroundColor: 'rgba(0,0,0,0.5)' }}>
+                  <ScrollView keyboardShouldPersistTaps="handled" style={{ flexGrow: 0, maxHeight: '90%', width: '100%', maxWidth: 440, backgroundColor: WHITE, borderRadius: 12 }} contentContainerStyle={{ padding: s(24) }}>
+                    <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(8) }}>Update pill count</Text>
+                    <CareBody scale={s}>{pillMedication?.name}{pillMedication?.total_pills != null ? ` · ${pillMedication.total_pills} total pills` : ''}</CareBody>
+                    <CareError message={pillError} scale={s} />
+                    <Text style={{ fontFamily: 'DMSans_500Medium', color: NAVY, marginBottom: s(6) }}>Pills remaining</Text>
+                    <TextInput accessibilityLabel="Pills remaining" value={pillCount} onChangeText={value => { setPillCount(value); setPillError(''); }} editable={!loading} keyboardType="number-pad" style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1, borderColor: BORDER, borderRadius: 8, padding: s(12), fontSize: s(18), color: NAVY, marginBottom: s(12) }} />
+                    {pillMedication?.total_pills != null && <CareAction label="Refill to full" onPress={() => { setPillCount(String(pillMedication.total_pills)); setPillError(''); }} disabled={loading} scale={s} />}
+                    <Button title="Save count" onPress={savePillCount} disabled={loading || !pillCount.trim()} loading={loading} style={{ marginBottom: s(8), marginTop: s(8) }} />
+                    <Button title="Cancel" onPress={() => setPillMedication(null)} disabled={loading} style={{ backgroundColor: MUTED }} />
+                  </ScrollView>
+                </View>
+              </KeyboardAvoidingView>
+            </Modal>
             <Modal onRequestClose={closeTaskForm} visible={addTaskVisible} animationType="slide" transparent>
               <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <ScrollView style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: s(24) }} keyboardShouldPersistTaps="handled">
