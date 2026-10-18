@@ -1,6 +1,7 @@
 import { useFocusEffect } from '@react-navigation/native';
 const { MOODS, isValidVitalValue } = require('../lib/careValues');
 const { medicationLogError } = require('../lib/medicationLogError');
+const { activePlanEntries } = require('../lib/planActivities');
 import { appAlert as Alert } from '../components/AppDialog';
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, Image, FlatList, ScrollView, useWindowDimensions, RefreshControl, TouchableOpacity, Linking, TextInput, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, AppState } from 'react-native';
@@ -441,7 +442,7 @@ export default function PatientHomeScreen({ route, navigation }) {
   };
 
   const scanActivitySticker = async (index) => {
-    if (!dailyPlan || scanningBlock !== null) return;
+    if (!dailyPlan || dailyPlan.blocks[index]?.removed || scanningBlock !== null) return;
     setScanningBlock(index);
     setCheckinError('');
     try {
@@ -695,7 +696,7 @@ export default function PatientHomeScreen({ route, navigation }) {
             <Ionicons name={dailyPlan ? 'calendar' : 'sparkles-outline'} size={s(28)} color={NAVY} style={{ marginRight: s(12) }} />
             <View style={{ flex: 1 }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(19), color: NAVY }}>{dailyPlan ? 'Your schedule is ready' : 'Build today’s schedule'}</Text>
-              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{dailyPlan ? `${dailyPlan.blocks?.length || 0} gentle plans for today` : 'Answer five quick questions'}</Text>
+              <Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: MUTED, marginTop: s(2) }}>{dailyPlan ? `${activePlanEntries(dailyPlan.blocks || []).length} gentle plans for today` : 'Answer five quick questions'}</Text>
             </View>
             <Ionicons name="chevron-forward" size={s(22)} color={NAVY} />
           </TouchableOpacity>
@@ -878,9 +879,10 @@ export default function PatientHomeScreen({ route, navigation }) {
                     <>
                       {!!checkinError && <Text style={{ color: DANGER, marginBottom: s(10) }}>{checkinError}</Text>}
                       <FlatList
-                        data={dailyPlan.blocks || []}
-                        keyExtractor={(item, index) => `${item.start}-${index}`}
-                        renderItem={({ item, index }) => {
+                        data={activePlanEntries(dailyPlan.blocks || [])}
+                        keyExtractor={({ block, index }) => `${block.start}-${index}`}
+                        ListEmptyComponent={<Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), color: MUTED }}>No activities scheduled for today.</Text>}
+                        renderItem={({ item: { block: item, index } }) => {
                           const checked = activityCheckins.find((entry) => entry.block_index === index);
                           return <View style={{ flexDirection: 'row', paddingVertical: s(10), borderBottomWidth: 1, borderBottomColor: BORDER }}>
                             <Text style={{ width: s(72), fontFamily: 'DMSans_700Bold', fontSize: s(13), color: NAVY }}>{displayTime(item.start)}</Text>

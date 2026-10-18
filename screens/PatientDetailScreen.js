@@ -30,6 +30,7 @@ import { writeLocationTag } from '../lib/nfc';
 import { NAVY, WHITE, PLACEHOLDER, SURFACE, BORDER, MUTED, WARNING, DANGER } from '../theme/colors';
 import { displayTime, planLabels } from '../lib/dailyPlan';
 const { localDateKey } = require('../lib/localDate');
+const { activePlanEntries, removePlanActivity } = require('../lib/planActivities');
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const TABS = ['Medications', 'Tasks', 'Schedule', 'Notes', 'Vitals', 'Appointments', 'Mood', 'Report'];
@@ -510,6 +511,7 @@ function DailyScheduleTab({ patientId, canEdit }) {
   const [blockTime, setBlockTime] = useState('');
   const [blockMinutes, setBlockMinutes] = useState('');
   const [editError, setEditError] = useState('');
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const editSaving = React.useRef(false);
 
   const openBlockEditor = (block, index) => {
@@ -519,21 +521,24 @@ function DailyScheduleTab({ patientId, canEdit }) {
     setBlockTime(String(block.start || '').slice(0, 5));
     setBlockMinutes(String(block.minutes ?? 0));
     setEditError('');
+    setConfirmingRemoval(false);
   };
 
   const closeBlockEditor = () => {
     if (editSaving.current) return;
     setEditingBlock(null);
     setEditError('');
+    setConfirmingRemoval(false);
   };
 
-  const saveBlock = async () => {
+  const saveBlock = async (remove = false) => {
     if (!canEdit || !editingBlock || editSaving.current || saving) return;
+    const removing = remove === true;
     const title = blockTitle.trim();
     const minutes = Number(blockMinutes.trim());
-    if (!title) { setEditError('Enter an activity name.'); return; }
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(blockTime)) { setEditError('Choose a valid start time.'); return; }
-    if (!/^\d+$/.test(blockMinutes.trim()) || !Number.isInteger(minutes) || minutes > 1440) { setEditError('Enter a duration from 0 to 1440 whole minutes.'); return; }
+    if (!removing && !title) { setEditError('Enter an activity name.'); return; }
+    if (!removing && !/^([01]\d|2[0-3]):[0-5]\d$/.test(blockTime)) { setEditError('Choose a valid start time.'); return; }
+    if (!removing && (!/^\d+$/.test(blockMinutes.trim()) || !Number.isInteger(minutes) || minutes > 1440)) { setEditError('Enter a duration from 0 to 1440 whole minutes.'); return; }
     editSaving.current = true;
     setSaving(true);
     setEditError('');
@@ -544,7 +549,7 @@ function DailyScheduleTab({ patientId, canEdit }) {
       const { data: latest, error: readError } = await supabase.from('daily_plans').select('*').eq('id', editingBlock.planId).eq('patient_id', patientId).eq('plan_date', editingBlock.date).single();
       if (readError) throw readError;
       if (!latest || JSON.stringify(latest.blocks?.[editingBlock.index]) !== editingBlock.original) throw new Error('This activity changed while you were editing. Close the editor, refresh, and try again.');
-      const blocks = latest.blocks.map((block, index) => index === editingBlock.index ? { ...block, title, start: blockTime, minutes } : block);
+      const blocks = removing ? removePlanActivity(latest.blocks, editingBlock.index) : latest.blocks.map((block, index) => index === editingBlock.index ? { ...block, title, start: blockTime, minutes } : block);
       let request = supabase.from('daily_plans').update({ blocks, overridden_by: user.id, updated_at: new Date().toISOString() }).eq('id', latest.id).eq('patient_id', patientId).eq('plan_date', editingBlock.date);
       if (latest.updated_at) request = request.eq('updated_at', latest.updated_at);
       const { data, error } = await request.select().single();
@@ -558,6 +563,12 @@ function DailyScheduleTab({ patientId, canEdit }) {
       editSaving.current = false;
       setSaving(false);
     }
+  };
+
+  const confirmRemoveBlock = () => {
+    if (!canEdit || !editingBlock || saving) return;
+    setEditError('');
+    setConfirmingRemoval(true);
   };
 
   const fetchPlan = async () => {
@@ -656,7 +667,8 @@ function DailyScheduleTab({ patientId, canEdit }) {
       <CareSectionHeader title="Today's schedule" scale={s} />
       {!plan ? <CareEmpty title="No schedule yet" icon="calendar-outline" detail="The patient can build today's plan from their morning check-in." scale={s} /> : <CareBody scale={s}>{plan.overridden_by ? 'Adjusted by caregiver' : 'Built from the morning check-in'}</CareBody>}
       <View style={{ alignItems: 'flex-start', marginBottom: s(8) }}><CareAction label="Refresh schedule and check-ins" onPress={async () => { try { await fetchPlan(); await fetchPlaces(); setPlaceError(''); } catch (error) { setPlaceError(error.message || 'Could not refresh.'); } }} scale={s} /></View>
-      {(plan?.blocks || []).map((block, index) => {
+      {!!plan && activePlanEntries(plan.blocks || []).length === 0 && <CareEmpty title="No activities scheduled" icon="calendar-outline" detail="There are no activities left on today's schedule." scale={s} />}
+      {activePlanEntries(plan?.blocks || []).map(({ block, index }) => {
         const checkin = checkins.find(item => item.block_index === index);
         return <CareCard key={`${block.start}-${index}`} scale={s}>
           <CareCardHeader title={block.title || planLabels[block.type] || 'Activity'} subtitle={`${block.minutes} minutes`} icon={block.type === 'medicine' ? 'medical-outline' : 'calendar-outline'} scale={s} action={canEdit && <CareAction label="Edit" accessibilityLabel={'Edit schedule activity ' + (block.title || planLabels[block.type] || 'Activity')} disabled={saving} onPress={() => openBlockEditor(block, index)} scale={s} />} />
@@ -690,8 +702,16 @@ function DailyScheduleTab({ patientId, canEdit }) {
               <TimePickerInput key={editingBlock ? `${editingBlock.planId}-${editingBlock.index}` : 'closed'} label="Start time" value={blockTime} onChange={setBlockTime} />
               <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Duration (minutes)</Text>
               <TextInput accessibilityLabel="Duration in minutes" value={blockMinutes} onChangeText={setBlockMinutes} editable={!saving} keyboardType="number-pad" maxLength={4} style={{ fontFamily: 'DMSans_400Regular', fontSize: s(16), color: NAVY, borderWidth: 1, borderColor: BORDER, borderRadius: 8, padding: s(12), marginBottom: s(16) }} />
-              <Button title="Save changes" onPress={saveBlock} loading={saving} disabled={saving || !blockTitle.trim() || !blockTime || !blockMinutes.trim()} style={{ marginBottom: s(8) }} />
-              <Button title="Cancel" onPress={closeBlockEditor} disabled={saving} style={{ backgroundColor: MUTED }} />
+              {confirmingRemoval ? <CareInset scale={s}>
+                <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(17), color: NAVY }}>Delete this activity?</Text>
+                <CareBody scale={s}>This removes the activity from today's schedule for you and the patient.</CareBody>
+                <Button title="Delete activity" onPress={() => saveBlock(true)} disabled={saving} loading={saving} style={{ backgroundColor: DANGER, marginBottom: s(8) }} />
+                <Button title="Keep activity" onPress={() => setConfirmingRemoval(false)} disabled={saving} style={{ backgroundColor: MUTED }} />
+              </CareInset> : <>
+                <Button title="Save changes" onPress={saveBlock} loading={saving} disabled={saving || !blockTitle.trim() || !blockTime || !blockMinutes.trim()} style={{ marginBottom: s(8) }} />
+                <Button title="Cancel" onPress={closeBlockEditor} disabled={saving} style={{ backgroundColor: MUTED }} />
+                <Button title="Delete activity" onPress={confirmRemoveBlock} disabled={saving} style={{ backgroundColor: WHITE, borderWidth: 1, borderColor: DANGER, marginTop: s(16) }} textStyle={{ color: DANGER }} />
+              </>}
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
