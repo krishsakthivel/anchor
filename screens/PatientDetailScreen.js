@@ -25,7 +25,7 @@ import Button from '../components/Button';
 import MedicationCard from '../components/MedicationCard';
 import { CareCard, CareCardHeader, CareSectionHeader, CareAction, CareBody, CareInset, CareMeta, CareEmpty, CareError } from '../components/CarePlanUI';
 import WeekdaySelector from '../components/WeekdaySelector';
-const { MEDICATION_DAYS, medicationScheduleError, medicationDaysLabel } = require('../lib/medicationSchedule');
+const { MEDICATION_DAYS, medicationDoseTimesError, medicationDaysLabel } = require('../lib/medicationSchedule');
 import TimePickerInput from '../components/TimePickerInput';
 import { writeLocationTag } from '../lib/nfc';
 import { NAVY, WHITE, PLACEHOLDER, SURFACE, BORDER, MUTED, WARNING, DANGER } from '../theme/colors';
@@ -66,6 +66,7 @@ export default function PatientDetailScreen({ route, navigation }) {
   const [medName, setMedName] = useState('');
   const [medDosage, setMedDosage] = useState('');
   const [medTime, setMedTime] = useState('');
+  const [secondMedTime, setSecondMedTime] = useState(null);
   const [medDays, setMedDays] = useState([...MEDICATION_DAYS]);
   const [medInstructions, setMedInstructions] = useState('');
   const [medTotalPills, setMedTotalPills] = useState('');
@@ -147,6 +148,7 @@ export default function PatientDetailScreen({ route, navigation }) {
 
 
   const selectMedicationSchedule = (schedule) => {
+    setSecondMedTime(null);
     setEditingSchedule(schedule);
     setMedTime(schedule?.time ? String(schedule.time).slice(0, 5) : '');
     setMedDays(schedule ? MEDICATION_DAYS.filter(day => normalizeDays(schedule.days).includes(day)) : [...MEDICATION_DAYS]);
@@ -165,9 +167,11 @@ export default function PatientDetailScreen({ route, navigation }) {
     setAddMedVisible(true);
   };
 
+  const doseTimeError = medicationDoseTimesError(medDays, medTime, secondMedTime, editingMedication ? schedules.filter(schedule => schedule.medication_id === editingMedication.id && schedule.id !== editingSchedule?.id && medDays.some(day => normalizeDays(schedule.days).includes(day))).map(schedule => String(schedule.time).slice(0, 5)) : []);
+
   const handleAddMedication = async () => {
     if (!medName.trim() || loading || !canEdit) return;
-    const scheduleValidation = medicationScheduleError(medDays, medTime);
+    const scheduleValidation = doseTimeError;
     if (scheduleValidation) { setMedError(scheduleValidation); return; }
     if (editingSchedule && !medTime.trim()) { setMedError('Choose a time for this dose.'); return; }
     const totalPills = medTotalPills.trim() === '' ? null : Number(medTotalPills);
@@ -211,9 +215,17 @@ export default function PatientDetailScreen({ route, navigation }) {
 
     if (enteredTime) {
       const scheduleValues = { time: enteredTime, frequency: medDays.length === 7 ? 'daily' : 'weekly', days: MEDICATION_DAYS.filter(day => medDays.includes(day)) };
-      const { error: scheduleError } = editingSchedule
-        ? await supabase.from('medication_schedule').update(scheduleValues).eq('id', editingSchedule.id).eq('medication_id', med.id).eq('patient_id', patientId).select('id').single()
-        : await supabase.from('medication_schedule').insert({ medication_id: med.id, patient_id: patientId, ...scheduleValues });
+      let scheduleError;
+      if (editingSchedule) {
+        ({ error: scheduleError } = await supabase.from('medication_schedule').update(scheduleValues).eq('id', editingSchedule.id).eq('medication_id', med.id).eq('patient_id', patientId).select('id').single());
+        if (!scheduleError && secondMedTime !== null) {
+          ({ error: scheduleError } = await supabase.from('medication_schedule').insert({ medication_id: med.id, patient_id: patientId, ...scheduleValues, time: secondMedTime.trim() }));
+        }
+      } else {
+        const firstDose = { medication_id: med.id, patient_id: patientId, ...scheduleValues };
+        const doses = secondMedTime === null ? firstDose : [firstDose, { ...firstDose, time: secondMedTime.trim() }];
+        ({ error: scheduleError } = await supabase.from('medication_schedule').insert(doses));
+      }
 
       if (scheduleError) {
         if (!editingMedication) {
@@ -231,6 +243,7 @@ export default function PatientDetailScreen({ route, navigation }) {
     setMedName('');
     setMedDosage('');
     setMedTime('');
+    setSecondMedTime(null);
     setMedDays([...MEDICATION_DAYS]);
     setMedInstructions('');
     setMedTotalPills('');
@@ -474,7 +487,9 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="e.g. 100mg" placeholderTextColor={PLACEHOLDER} value={medDosage} onChangeText={setMedDosage} />
 
                   <WeekdaySelector value={medDays} onChange={setMedDays} disabled={loading} />
-                  <TimePickerInput label={!editingSchedule && medDays.length === 7 ? 'Medicine time (optional)' : 'Medicine time *'} value={medTime} onChange={setMedTime} optional={!editingSchedule && medDays.length === 7} />
+                  <TimePickerInput label={!editingSchedule && secondMedTime === null && medDays.length === 7 ? 'Medicine time (optional)' : 'Medicine time *'} value={medTime} onChange={setMedTime} optional={!editingSchedule && secondMedTime === null && medDays.length === 7} />
+                  {secondMedTime !== null ? <><TimePickerInput label="Second dose time *" value={secondMedTime} onChange={setSecondMedTime} /><CareAction label="Remove second dose time" onPress={() => setSecondMedTime(null)} disabled={loading} scale={s} /></> : (!editingMedication || schedules.filter(schedule => schedule.medication_id === editingMedication.id).length < 2) && <CareAction label="+ Add another dose time" onPress={() => setSecondMedTime('')} disabled={loading} scale={s} />}
+                  {!!doseTimeError && secondMedTime !== null && <CareBody scale={s}>{doseTimeError}</CareBody>}
                   {medDays.length > 0 && medDays.length < 7 && !medTime && <Text style={{ color: NAVY, fontFamily: 'DMSans_400Regular', fontSize: s(12), marginBottom: s(12) }}>Choose a time for the selected days.</Text>}
 
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Instructions</Text>
@@ -486,7 +501,7 @@ export default function PatientDetailScreen({ route, navigation }) {
                   <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Pills Remaining</Text>
                   <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(16) }} placeholder="e.g. 25" placeholderTextColor={PLACEHOLDER} value={medPillsRemaining} onChangeText={setMedPillsRemaining} keyboardType="numeric" />
 
-                  <Button title={editingMedication ? 'Save changes' : 'Add Medication'} onPress={handleAddMedication} disabled={!medName.trim() || loading || !!medicationScheduleError(medDays, medTime) || (!!editingSchedule && !medTime)} loading={loading} style={{ marginBottom: s(8) }} />
+                  <Button title={editingMedication ? 'Save changes' : 'Add Medication'} onPress={handleAddMedication} disabled={!medName.trim() || loading || !!doseTimeError || (!!editingSchedule && !medTime)} loading={loading} style={{ marginBottom: s(8) }} />
                   <Button title="Cancel" disabled={loading} onPress={() => { setAddMedVisible(false); setMedName(''); setMedDosage(''); setMedTime(''); setMedDays([...MEDICATION_DAYS]); setMedInstructions(''); setMedTotalPills(''); setMedPillsRemaining(''); }} style={{ backgroundColor: '#999' }} />
                 </ScrollView>
                 </View>
