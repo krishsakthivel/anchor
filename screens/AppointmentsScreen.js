@@ -35,6 +35,7 @@ export default function AppointmentsScreen({ route, navigation }) {
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [formError, setFormError] = useState('');
 
   const scale = Math.min(1.08, Math.max(0.95, width / 375));
   const s = (size) => Math.round(size * scale);
@@ -69,6 +70,7 @@ export default function AppointmentsScreen({ route, navigation }) {
 
   const handleAdd = async () => {
     if (!title.trim() || !date.trim() || !time.trim()) return;
+    setFormError('');
     setLoading(true);
     try {
 
@@ -84,14 +86,14 @@ export default function AppointmentsScreen({ route, navigation }) {
       || parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day
       || parsed.getHours() !== hour || parsed.getMinutes() !== minute) {
       setLoading(false);
-      Alert.alert('Invalid date or time', 'Please use YYYY-MM-DD for the date and HH:MM for the time.');
+      setFormError('Enter a valid date (YYYY-MM-DD) and time.');
       return;
     }
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       setLoading(false);
-      Alert.alert('Error', 'Your session has expired. Please sign in again.');
+      setFormError('Your session has expired. Please sign in again.');
       return;
     }
     const appointmentTime = parsed.toISOString();
@@ -110,7 +112,7 @@ export default function AppointmentsScreen({ route, navigation }) {
 
     setLoading(false);
     if (error) {
-      Alert.alert('Could not add appointment', error.message || 'Please try again.');
+      setFormError(error.message || 'Could not add appointment. Please try again.');
       return;
     }
 
@@ -123,7 +125,7 @@ export default function AppointmentsScreen({ route, navigation }) {
     setNotes('');
     fetchAppointments();
     } catch (error) {
-      Alert.alert('Could not save', error.message || 'Please try again.');
+      setFormError(error.message || 'Could not save. Please try again.');
     } finally { setLoading(false); }
   };
 
@@ -168,7 +170,7 @@ export default function AppointmentsScreen({ route, navigation }) {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: s(16) }}>
             <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY }}>Appointments</Text>
             {!isPatient && (
-              <TouchableOpacity onPress={() => setAddVisible(true)}>
+              <TouchableOpacity onPress={() => { setFormError(''); setAddVisible(true); }}>
                 <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(14), color: NAVY }}>+ Add</Text>
               </TouchableOpacity>
             )}
@@ -248,6 +250,7 @@ export default function AppointmentsScreen({ route, navigation }) {
             >
             <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%', maxWidth: 440 }}>
               <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Appointment</Text>
+              {!!formError && <Text accessibilityRole="alert" style={{ color: '#C0392B', marginBottom: s(12) }}>{formError}</Text>}
 
               <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY, marginBottom: s(4) }}>Title *</Text>
               <TextInput
