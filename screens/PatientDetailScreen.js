@@ -744,6 +744,17 @@ function CareNotesTab({ patientId, canEdit }) {
   const [noteTitle, setNoteTitle] = useState('');
   const [noteBody, setNoteBody] = useState('');
   const [loading, setLoading] = useState(false);
+  const [editingNote, setEditingNote] = useState(null);
+  const [noteError, setNoteError] = useState('');
+
+  const openNote = (note = null) => {
+    if (!canEdit || loading) return;
+    setEditingNote(note);
+    setNoteTitle(note?.title || '');
+    setNoteBody(note?.body || '');
+    setNoteError('');
+    setAddVisible(true);
+  };
 
   const fetchNotes = async () => {
     const { data, error } = await supabase.from('care_notes').select('*').eq('patient_id', patientId).order('pinned', { ascending: false }).order('created_at', { ascending: false });
@@ -754,27 +765,23 @@ function CareNotesTab({ patientId, canEdit }) {
   const loadError = useTabLoader(fetchNotes, patientId);
 
   const handleAdd = async () => {
-    if (!noteTitle.trim() || !noteBody.trim()) return;
+    if (!canEdit || loading || !noteTitle.trim() || !noteBody.trim()) return;
     setLoading(true);
+    setNoteError('');
     try {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      setLoading(false);
-      Alert.alert('Session expired', 'Please sign in again before adding a note.');
-      return;
-    }
-    const { error } = await supabase.from('care_notes').insert({ patient_id: patientId, created_by: user.id, title: noteTitle.trim(), body: noteBody.trim() });
-    setLoading(false);
-    if (error) {
-      Alert.alert('Error', error.message || 'Could not add this note.');
-      return;
-    }
+    if (!user) throw new Error('Your session has expired. Please sign in again.');
+    const values = { title: noteTitle.trim(), body: noteBody.trim() };
+    const { error } = editingNote
+      ? await supabase.from('care_notes').update(values).eq('id', editingNote.id).eq('patient_id', patientId).select('id').single()
+      : await supabase.from('care_notes').insert({ patient_id: patientId, created_by: user.id, ...values });
+    if (error) throw error;
     setAddVisible(false);
     setNoteTitle('');
     setNoteBody('');
     fetchNotes().catch(error => Alert.alert('Could not refresh notes', error.message));
     } catch (error) {
-      Alert.alert('Could not save', error.message || 'Please try again.');
+      setNoteError(error.message || 'Could not save the note. Please try again.');
     } finally { setLoading(false); }
   };
 
@@ -805,23 +812,24 @@ function CareNotesTab({ patientId, canEdit }) {
   return (
     <>
       <CareError message={loadError} scale={s} />
-      <CareSectionHeader title="Care Notes" action={canEdit ? '+ Add' : null} onPress={() => setAddVisible(true)} scale={s} />
+      <CareSectionHeader title="Care Notes" action={canEdit ? '+ Add' : null} onPress={() => openNote()} scale={s} />
       {notes.length === 0 ? <CareEmpty title="No notes yet" icon="document-text-outline" detail="Care instructions and updates will appear here." scale={s} /> : notes.map(note => (
         <CareCard key={note.id} scale={s}>
           <CareCardHeader title={note.title} subtitle={note.pinned ? 'Pinned note' : 'Care note'} icon={note.pinned ? 'pin-outline' : 'document-text-outline'} scale={s} action={canEdit && <CareAction label={note.pinned ? 'Unpin' : 'Pin'} accessibilityLabel={(note.pinned ? 'Unpin ' : 'Pin ') + note.title} onPress={() => handleTogglePin(note)} scale={s} />} />
           <CareInset scale={s}><Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), lineHeight: s(21), color: NAVY }}>{note.body}</Text></CareInset>
-          {canEdit && <View style={{ alignItems: 'flex-end', marginTop: s(6) }}><CareAction label="Delete" accessibilityLabel={'Delete note ' + note.title} onPress={() => handleDeleteNote(note)} disabled={loading} scale={s} /></View>}
+          {canEdit && <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: s(6) }}><CareAction label="Edit" accessibilityLabel={'Edit note ' + note.title} onPress={() => openNote(note)} disabled={loading} scale={s} /><CareAction label="Delete" accessibilityLabel={'Delete note ' + note.title} onPress={() => handleDeleteNote(note)} disabled={loading} scale={s} /></View>}
         </CareCard>
       ))}
       <Modal onRequestClose={() => { if (loading) return; setAddVisible(false); }} visible={addVisible} animationType="slide" transparent>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <View style={{ backgroundColor: WHITE, borderRadius: 12, padding: s(24), width: '85%' }}>
-            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>Add Note</Text>
+            <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(20), color: NAVY, marginBottom: s(16) }}>{editingNote ? 'Edit Note' : 'Add Note'}</Text>
+            <CareError message={noteError} scale={s} />
             <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, marginBottom: s(12) }} placeholder="Title" placeholderTextColor={PLACEHOLDER} value={noteTitle} onChangeText={setNoteTitle} />
             <TextInput style={{ fontFamily: 'DMSans_400Regular', borderWidth: 1.5, borderColor: NAVY, borderRadius: 8, padding: s(12), fontSize: s(16), color: NAVY, height: s(100), textAlignVertical: 'top', marginBottom: s(16) }} placeholder="Note" placeholderTextColor={PLACEHOLDER} value={noteBody} onChangeText={setNoteBody} multiline />
-                  <Button title={loading ? 'Adding' : 'Add'} onPress={handleAdd} disabled={!noteTitle.trim() || !noteBody.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
-            <Button title="Cancel" onPress={() => { setAddVisible(false); setNoteTitle(''); setNoteBody(''); }} style={{ backgroundColor: '#999' }} />
+                  <Button title={editingNote ? 'Save changes' : 'Add'} onPress={handleAdd} disabled={!noteTitle.trim() || !noteBody.trim() || loading} loading={loading} style={{ marginBottom: s(8) }} />
+            <Button title="Cancel" disabled={loading} onPress={() => { setAddVisible(false); setNoteTitle(''); setNoteBody(''); }} style={{ backgroundColor: '#999' }} />
           </View>
         </View>
         </KeyboardAvoidingView>
