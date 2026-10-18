@@ -768,6 +768,24 @@ function CareNotesTab({ patientId, canEdit }) {
     else fetchNotes().catch(error => Alert.alert('Could not refresh notes', error.message));
   };
 
+  const handleDeleteNote = (note) => {
+    if (!canEdit || loading) return;
+    Alert.alert('Delete note?', `Delete "${note.title}"? This cannot be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        setLoading(true);
+        try {
+          const { data, error } = await supabase.from('care_notes').delete().eq('id', note.id).eq('patient_id', patientId).select('id').single();
+          if (error) throw error;
+          if (!data) throw new Error('This note could not be deleted. Refresh and try again.');
+          setNotes(current => current.filter(item => item.id !== note.id));
+        } catch (error) {
+          Alert.alert('Could not delete note', error.message || 'Please try again.');
+        } finally { setLoading(false); }
+      } },
+    ]);
+  };
+
   return (
     <>
       <CareError message={loadError} scale={s} />
@@ -776,6 +794,7 @@ function CareNotesTab({ patientId, canEdit }) {
         <CareCard key={note.id} scale={s}>
           <CareCardHeader title={note.title} subtitle={note.pinned ? 'Pinned note' : 'Care note'} icon={note.pinned ? 'pin-outline' : 'document-text-outline'} scale={s} action={canEdit && <CareAction label={note.pinned ? 'Unpin' : 'Pin'} accessibilityLabel={(note.pinned ? 'Unpin ' : 'Pin ') + note.title} onPress={() => handleTogglePin(note)} scale={s} />} />
           <CareInset scale={s}><Text style={{ fontFamily: 'DMSans_400Regular', fontSize: s(14), lineHeight: s(21), color: NAVY }}>{note.body}</Text></CareInset>
+          {canEdit && <View style={{ alignItems: 'flex-end', marginTop: s(6) }}><CareAction label="Delete" accessibilityLabel={'Delete note ' + note.title} onPress={() => handleDeleteNote(note)} disabled={loading} scale={s} /></View>}
         </CareCard>
       ))}
       <Modal onRequestClose={() => { if (loading) return; setAddVisible(false); }} visible={addVisible} animationType="slide" transparent>
