@@ -54,3 +54,11 @@ npx expo export --platform web
 ```
 
 Family access has been removed. For an existing Supabase project, run `lib/migrations/20261022_remove_family_access.sql` in SQL Editor after all earlier migrations. It disables the old code-claim/status RPCs and access to retired code tables without deleting records. Fresh installs omit the family feature.
+
+## Patient PDF export
+
+Open a patient's care plan and choose **Export PDF** next to their name. On iOS and Android, save or share the generated PDF using the system sheet. On web, choose **Save as PDF** in the print dialog.
+
+Exports include all saved records readable by the current account: patient details, emergency contacts, medications and every dose time, tasks, notes, appointments, vitals, mood and safety check-ins, medication/task history, daily plans, activity check-ins, and reminders. History is paginated so it is not silently cut off at the server row limit. Pairing codes and internal access tokens are omitted. Failed reads stop the export instead of producing an incomplete report.
+
+The file is generated on the device; exporting does not write care records or upload the report to a new service. Installed builds, including an existing Appetize upload, must be rebuilt to include the new native PDF/share modules. No SQL migration is required.

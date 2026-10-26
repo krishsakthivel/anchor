@@ -23,6 +23,7 @@ import { useCaregiverTour, TourPrompt } from '../components/CaregiverTour';
 import * as Crypto from 'expo-crypto';
 import Button from '../components/Button';
 import MedicationCard from '../components/MedicationCard';
+import PatientPdfExport from '../components/PatientPdfExport';
 import { CareCard, CareCardHeader, CareSectionHeader, CareAction, CareBody, CareInset, CareMeta, CareEmpty, CareError } from '../components/CarePlanUI';
 import WeekdaySelector from '../components/WeekdaySelector';
 const { MEDICATION_DAYS, medicationDoseTimesError, medicationDaysLabel } = require('../lib/medicationSchedule');
@@ -437,7 +438,7 @@ export default function PatientDetailScreen({ route, navigation }) {
         <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginBottom: s(8) }}>
           <Text style={{ fontFamily: 'DMSans_500Medium', fontSize: s(14), color: NAVY }}>← Back</Text>
         </TouchableOpacity>
-        <Text style={{ fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY, marginBottom: s(12) }}>{patientName}</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: s(12), marginBottom: s(12) }}><Text style={{ flex: 1, fontFamily: 'DMSans_700Bold', fontSize: s(22), color: NAVY }}>{patientName}</Text><PatientPdfExport key={patientId} client={supabase} patientId={patientId} /></View>
         <Button title="Refresh care plan" onPress={onRefresh} disabled={refreshing} loading={refreshing} style={{ marginBottom: s(12) }} />
 
         <ScrollView ref={tourTabs} onContentSizeChange={revealTourTab} horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: s(12) }}>

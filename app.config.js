@@ -27,7 +27,7 @@ export default {
     web: {
       favicon: './assets/favicon.png',
     },
-    plugins: ['expo-font', 'expo-notifications', ['react-native-nfc-manager', { nfcPermission: 'Use NFC stickers to check in to scheduled activities.' }]],
+    plugins: ['expo-font', 'expo-notifications', 'expo-sharing', ['react-native-nfc-manager', { nfcPermission: 'Use NFC stickers to check in to scheduled activities.' }]],
     extra: {
       supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
       supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
